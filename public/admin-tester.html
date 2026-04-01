@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Admin Function Tester</title>
+    <style>
+        body { 
+            font-family: Arial, sans-serif; 
+            margin: 20px; 
+            background: #f5f5f5;
+        }
+        .container { 
+            max-width: 800px; 
+            margin: 0 auto; 
+            background: white; 
+            padding: 30px; 
+            border-radius: 12px; 
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+        }
+        .btn { 
+            background: linear-gradient(135deg, #667eea, #764ba2);
+            color: white; 
+            border: none; 
+            padding: 12px 24px; 
+            margin: 8px; 
+            border-radius: 8px; 
+            cursor: pointer;
+            font-weight: 600;
+            transition: all 0.3s;
+        }
+        .btn:hover { 
+            transform: translateY(-2px);
+            box-shadow: 0 6px 16px rgba(102, 126, 234, 0.3);
+        }
+        .result { 
+            background: #f8f9fa; 
+            padding: 15px; 
+            margin: 10px 0; 
+            border-radius: 8px; 
+            border-left: 4px solid #28a745;
+            font-family: monospace;
+            white-space: pre-wrap;
+        }
+        .error { 
+            border-left-color: #dc3545; 
+            background: #f8d7da;
+        }
+        h1 { color: #333; text-align: center; }
+        h2 { color: #667eea; margin-top: 30px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔧 Admin Function Tester</h1>
+        
+        <h2>📦 Categories</h2>
+        <button class="btn" onclick="fetchCategories()">Get All Categories</button>
+        <button class="btn" onclick="addTestCategory()">Add Test Category</button>
+        
+        <h2>🛒 Items</h2>
+        <button class="btn" onclick="fetchItems()">Get All Items</button>
+        <button class="btn" onclick="addTestItem()">Add Test Item</button>
+        
+        <h2>💰 Sales</h2>
+        <button class="btn" onclick="fetchSales()">Get Sales Data</button>
+        
+        <h2>👥 Users</h2>
+        <button class="btn" onclick="fetchUsers()">Get All Users</button>
+        
+        <h2>🔄 Admin Dashboard</h2>
+        <button class="btn" onclick="goToAdminDashboard()" style="background: linear-gradient(135deg, #28a745, #20c997);">
+            🚀 Open Admin Dashboard
+        </button>
+        
+        <div id="result"></div>
+    </div>
+
+    <script>
+        const API_BASE = 'http://localhost:5001/api';
+        
+        function showResult(data, isError = false) {
+            const resultDiv = document.getElementById('result');
+            resultDiv.className = 'result' + (isError ? ' error' : '');
+            resultDiv.textContent = JSON.stringify(data, null, 2);
+        }
+
+        async function fetchCategories() {
+            try {
+                const response = await fetch(`${API_BASE}/categories`);
+                const data = await response.json();
+                showResult({ status: response.status, data });
+            } catch (error) {
+                showResult({ error: error.message }, true);
+            }
+        }
+
+        async function addTestCategory() {
+            try {
+                const response = await fetch(`${API_BASE}/categories`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        name: 'Test Category ' + Date.now(),
+                        description: 'Test category created from admin tester'
+                    })
+                });
+                const data = await response.json();
+                showResult({ status: response.status, data });
+            } catch (error) {
+                showResult({ error: error.message }, true);
+            }
+        }
+
+        async function fetchItems() {
+            try {
+                const response = await fetch(`${API_BASE}/inventory/items`);
+                const data = await response.json();
+                showResult({ status: response.status, count: data.length, items: data.slice(0, 5) });
+            } catch (error) {
+                showResult({ error: error.message }, true);
+            }
+        }
+
+        async function addTestItem() {
+            try {
+                const response = await fetch(`${API_BASE}/inventory/items`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        item_name: 'Test Item ' + Date.now(),
+                        quantity: 100,
+                        price: 50.00,
+                        category: 'Bread'
+                    })
+                });
+                const data = await response.json();
+                showResult({ status: response.status, data });
+            } catch (error) {
+                showResult({ error: error.message }, true);
+            }
+        }
+
+        async function fetchSales() {
+            try {
+                const response = await fetch(`${API_BASE}/sales/daily`);
+                const data = await response.json();
+                showResult({ status: response.status, data });
+            } catch (error) {
+                showResult({ error: error.message }, true);
+            }
+        }
+
+        async function fetchUsers() {
+            try {
+                const response = await fetch(`${API_BASE}/users`);
+                const data = await response.json();
+                showResult({ status: response.status, data });
+            } catch (error) {
+                showResult({ error: error.message }, true);
+            }
+        }
+
+        function goToAdminDashboard() {
+            // Set admin credentials
+            const adminUser = {
+                id: 999,
+                email: 'admin@breadmilk.com',
+                username: 'admin',
+                firstname: 'Admin',
+                lastname: 'User',
+                role: 'Admin',
+                status: 'Active'
+            };
+            
+            localStorage.setItem('user', JSON.stringify(adminUser));
+            localStorage.setItem('userRole', 'Admin');
+            localStorage.setItem('userRoleType', 'ADMIN');
+            
+            window.open('http://localhost:3001/admin-dashboard', '_blank');
+        }
+
+        // Test connection on load
+        window.onload = function() {
+            showResult({ message: 'Admin Tester loaded. Click buttons to test admin functions.' });
+        };
+    </script>
+</body>
+</html>

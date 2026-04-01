@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Admin Direct Login</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+        }
+        .login-box {
+            background: white;
+            padding: 40px;
+            border-radius: 15px;
+            box-shadow: 0 15px 35px rgba(0,0,0,0.1);
+            text-align: center;
+            max-width: 400px;
+            width: 100%;
+        }
+        .admin-icon {
+            font-size: 60px;
+            margin-bottom: 20px;
+        }
+        h1 {
+            color: #333;
+            margin-bottom: 30px;
+        }
+        .admin-btn {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 15px 30px;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: bold;
+            cursor: pointer;
+            width: 100%;
+            margin: 10px 0;
+            transition: transform 0.2s;
+        }
+        .admin-btn:hover {
+            transform: translateY(-2px);
+        }
+        .info {
+            background: #e3f2fd;
+            padding: 15px;
+            border-radius: 8px;
+            margin: 20px 0;
+            font-size: 14px;
+        }
+    </style>
+</head>
+<body>
+    <div class="login-box">
+        <div class="admin-icon">👑</div>
+        <h1>Admin Dashboard Access</h1>
+        
+        <div class="info">
+            <strong>Admin Credentials:</strong><br>
+            Username: admin<br>
+            Password: admin123
+        </div>
+        
+        <button class="admin-btn" onclick="loginAsAdmin()">
+            🔐 Login as Admin
+        </button>
+        
+        <button class="admin-btn" onclick="goToDashboard()" style="background: linear-gradient(135deg, #48bb78 0%, #38a169 100%);">
+            🚀 Go to Admin Dashboard
+        </button>
+        
+        <button class="admin-btn" onclick="goToNormalLogin()" style="background: linear-gradient(135deg, #ed8936 0%, #dd6b20 100%);">
+            👤 Normal Login Page
+        </button>
+    </div>
+
+    <script>
+        function loginAsAdmin() {
+            // Set admin user data directly
+            const adminUser = {
+                id: 999,
+                email: 'admin@breadmilk.com',
+                username: 'admin',
+                firstname: 'Admin',
+                lastname: 'User',
+                role: 'Admin',
+                status: 'Active'
+            };
+            
+            localStorage.setItem('user', JSON.stringify(adminUser));
+            localStorage.setItem('userRole', 'Admin');
+            localStorage.setItem('userRoleType', 'ADMIN');
+            
+            alert('✅ Admin login successful! Redirecting to admin dashboard...');
+            window.location.href = 'http://localhost:3001/admin-dashboard';
+        }
+        
+        function goToDashboard() {
+            // Just go directly to admin dashboard
+            window.location.href = 'http://localhost:3001/admin-dashboard';
+        }
+        
+        function goToNormalLogin() {
+            window.location.href = 'http://localhost:3001/login';
+        }
+        
+        // Auto-login on page load
+        window.onload = function() {
+            console.log('Admin login page loaded');
+        };
+    </script>
+</body>
+</html>

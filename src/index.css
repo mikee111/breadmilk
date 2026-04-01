@@ -11,3 +11,62 @@ code {
   font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New',
     monospace;
 }
+
+/* Enhanced animations for the Add Items form */
+@keyframes pulse {
+  0% { opacity: 1; }
+  50% { opacity: 0.7; }
+  100% { opacity: 1; }
+}
+
+@keyframes slideInUp {
+  from {
+    opacity: 0;
+    transform: translateY(30px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* Enhanced form styles */
+.enhanced-form-container {
+  animation: slideInUp 0.6s ease-out;
+}
+
+.form-row {
+  transition: all 0.3s ease;
+}
+
+.form-row:hover {
+  background-color: #f8f9fa;
+  transform: translateY(-1px);
+}
+
+/* Responsive enhancements */
+@media (max-width: 768px) {
+  .enhanced-form-container {
+    padding: 16px;
+    margin: 16px;
+  }
+  
+  .form-table {
+    font-size: 14px;
+  }
+  
+  .action-buttons {
+    flex-direction: column;
+    gap: 12px;
+  }
+  
+  .action-buttons button {
+    width: 100%;
+    padding: 14px 24px;
+  }
+}

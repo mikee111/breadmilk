@@ -1,0 +1,95 @@
+.registration-page {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  height: 100vh;
+  background-color: #f9f9f9;
+}
+
+.registration-form {
+  background-color: #f4a261;
+  padding: 2.5rem 2rem;
+  border-radius: 20px;
+  width: 750px;
+  max-width: 98vw;
+  text-align: center;
+  box-shadow: 0px 4px 16px rgba(0, 0, 0, 0.18);
+  overflow: hidden;
+}
+
+.registration-form h2 {
+  font-size: 2.2rem;
+  margin-bottom: 1.5rem;
+}
+
+.registration-form form {
+  display: flex;
+  flex-direction: column;
+  gap: 1.2rem;
+}
+
+.form-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  justify-content: center;
+  width: 100%;
+}
+
+.form-row input,
+.form-row select {
+  padding: 0.85rem;
+  font-size: 1.15rem;
+  border: 1px solid #ccc;
+  border-radius: 10px;
+  min-width: 120px;
+  max-width: 170px;
+  box-sizing: border-box;
+  background: #fff;
+  flex: 0 1 170px;
+}
+
+.registration-form button {
+  padding: 1rem 2.5rem;
+  font-size: 1.2rem;
+  background-color: #e76f51;
+  color: #fff;
+  border: none;
+  border-radius: 10px;
+  cursor: pointer;
+  margin-top: 1rem;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.10);
+  transition: background 0.2s;
+}
+
+.registration-form button:hover {
+  background-color: #d65a31;
+}
+
+/* Responsive adjustments */
+@media (max-width: 900px) {
+  .registration-form {
+    width: 99vw;
+    padding: 1.2rem;
+    border-radius: 14px;
+  }
+  .form-row {
+    flex-direction: column;
+    gap: 0.7rem;
+  }
+  .form-row input,
+  .form-row select {
+    max-width: 100%;
+    min-width: 0;
+    width: 100%;
+  }
+}
+    gap: 0.7rem;
+  }
+  .form-row input,
+  .form-row select {
+    max-width: 100%;
+    min-width: 0;
+    width: 100%;
+  }
+}
