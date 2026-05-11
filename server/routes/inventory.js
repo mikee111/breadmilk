@@ -144,4 +144,106 @@ router.put('/items/update/:itemId', async (req, res) => {
   }
 });
 
+// Adjust item stock (+ / -)
+router.put('/items/:itemId/adjust-stock', async (req, res) => {
+  let connection;
+  try {
+    const { operation, amount } = req.body || {};
+    const parsedAmount = parseInt(amount, 10);
+    const itemId = parseInt(req.params.itemId, 10);
+
+    if (!Number.isFinite(itemId) || itemId <= 0) {
+      return res.status(400).json({ success: false, message: 'Invalid item ID' });
+    }
+
+    if (!['add', 'subtract'].includes(operation)) {
+      return res.status(400).json({ success: false, message: 'Invalid operation. Use "add" or "subtract".' });
+    }
+
+    if (!Number.isFinite(parsedAmount) || parsedAmount <= 0) {
+      return res.status(400).json({ success: false, message: 'Amount must be a positive number.' });
+    }
+
+    connection = await mysql.createConnection(dbConfig);
+    await connection.beginTransaction();
+
+    const [rows] = await connection.execute(
+      'SELECT item_id, item_name, quantity FROM inventory WHERE item_id = ? FOR UPDATE',
+      [itemId]
+    );
+
+    if (!rows.length) {
+      await connection.rollback();
+      return res.status(404).json({ success: false, message: 'Item not found' });
+    }
+
+    const item = rows[0];
+    const oldQuantity = parseInt(item.quantity, 10) || 0;
+    const signedAmount = operation === 'add' ? parsedAmount : -parsedAmount;
+    const newQuantity = oldQuantity + signedAmount;
+
+    if (newQuantity < 0) {
+      await connection.rollback();
+      return res.status(400).json({
+        success: false,
+        message: `Cannot subtract ${parsedAmount}. Only ${oldQuantity} in stock.`
+      });
+    }
+
+    await connection.execute(
+      'UPDATE inventory SET quantity = ?, `updated-at` = NOW() WHERE item_id = ?',
+      [newQuantity, itemId]
+    );
+
+    await connection.commit();
+
+    return res.json({
+      success: true,
+      message: 'Stock adjusted successfully',
+      item_id: itemId,
+      item_name: item.item_name,
+      operation,
+      amount: parsedAmount,
+      old_quantity: oldQuantity,
+      new_quantity: newQuantity
+    });
+  } catch (error) {
+    if (connection) {
+      try {
+        await connection.rollback();
+      } catch (rollbackError) {
+      }
+    }
+    console.error('Error adjusting stock:', error);
+    return res.status(500).json({ success: false, message: 'Failed to adjust stock', error: error.message });
+  } finally {
+    if (connection) {
+      await connection.end();
+    }
+  }
+});
+
+// Delete an item
+router.delete('/items/:itemId', async (req, res) => {
+  try {
+    const connection = await mysql.createConnection(dbConfig);
+
+    const [result] = await connection.execute(
+      'DELETE FROM inventory WHERE item_id = ?',
+      [req.params.itemId]
+    );
+
+    await connection.end();
+
+    if (result.affectedRows === 0) {
+      res.status(404).json({ success: false, message: 'Item not found' });
+    } else {
+      res.json({ success: true, message: 'Item deleted successfully' });
+    }
+  } catch (error) {
+    console.error('Error deleting item:', error);
+    res.status(500).json({ success: false, message: 'Failed to delete item', error: error.message });
+  }
+});
+
 module.exports = router;

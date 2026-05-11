@@ -456,9 +456,9 @@ export default class UserDashboardSimple extends Component {
     console.log('📝 Request Note:', requestForm.note);
     
     // Find the selected item
-    const selectedItem = inventoryItems.find(item => 
-      item.item_id == requestForm.item_id || item.id == requestForm.item_id
-    );
+    const selectedItem = inventoryItems.find((item) => (
+      item.item_id === requestForm.item_id || item.id === requestForm.item_id
+    ));
     console.log('🎯 Selected Item Details:', selectedItem);
     
     // Test server connection immediately
@@ -557,7 +557,7 @@ export default class UserDashboardSimple extends Component {
     const safeInventoryItems = Array.isArray(inventoryItems) ? inventoryItems : [];
     const safeUserRequests = Array.isArray(userRequests) ? userRequests : [];
     
-    const totalItems = safeInventoryItems.length;
+    // totalItems kept for future use (e.g., KPI card / export)
     const availableItems = safeInventoryItems.filter(item => item.quantity > 0).length;
     const lowStockItems = this.getLowStockItems();
     const pendingRequests = safeUserRequests.filter(req => req.status === 'pending').length;
@@ -648,64 +648,90 @@ export default class UserDashboardSimple extends Component {
 
     return (
       <div className="inventory-content">
-        <div className="inventory-controls">
-          <input
-            type="text"
-            placeholder="🔍 Search items..."
-            value={searchTerm}
-            onChange={(e) => this.setState({ searchTerm: e.target.value })}
-            className="search-input"
-          />
+        <div className="inventory-header-section">
+          <h3>📦 View Inventory</h3>
+          <p className="section-subtitle">Browse all available products and make requests.</p>
+        </div>
+
+        <div className="inventory-controls-enhanced">
+          <div className="search-bar-container">
+            <span className="search-icon">🔍</span>
+            <input
+              type="text"
+              placeholder="Search products by name..."
+              value={searchTerm}
+              onChange={(e) => this.setState({ searchTerm: e.target.value })}
+              className="search-input-modern"
+            />
+          </div>
           
-          <select
-            value={selectedCategory}
-            onChange={(e) => this.setState({ selectedCategory: e.target.value })}
-            className="category-select"
-          >
-            <option value="all">All Categories</option>
-            {categories.map(cat => (
-              <option key={cat.category_id} value={cat.name}>
-                {cat.name}
-              </option>
-            ))}
-          </select>
+          <div className="category-filter-container">
+            <span className="filter-label">Filter by Category:</span>
+            <div className="category-chips">
+              <button 
+                className={`category-chip ${selectedCategory === 'all' ? 'active' : ''}`}
+                onClick={() => this.setState({ selectedCategory: 'all' })}
+              >
+                All Items
+              </button>
+              {categories.map(cat => (
+                <button 
+                  key={cat.category_id || cat.id} 
+                  className={`category-chip ${selectedCategory === cat.name ? 'active' : ''}`}
+                  onClick={() => this.setState({ selectedCategory: cat.name })}
+                >
+                  {cat.name}
+                </button>
+              ))}
+            </div>
+          </div>
         </div>
 
         <div className="items-grid">
           {filteredItems.map(item => (
-            <div key={item.item_id} className="item-card">
-              <div className="item-header">
+            <div key={item.item_id} className="item-card-modern">
+              <div className="item-badge">{item.category}</div>
+              <div className="item-card-header">
                 <h4>{item.item_name}</h4>
-                <span className="item-category">{item.category}</span>
               </div>
               
-              <div className="item-details">
-                <div className="item-quantity">
-                  <span className="quantity-label">Available:</span>
-                  <span className={`quantity-value ${item.quantity <= 10 ? 'low-stock' : ''}`}>
-                    {item.quantity}
+              <div className="item-card-body">
+                <div className="item-stock-info">
+                  <span className="label">Available Stock:</span>
+                  <span className={`value ${item.quantity <= 10 ? 'low-stock' : 'in-stock'}`}>
+                    {item.quantity} units
                   </span>
                 </div>
-                <div className="item-price">₱{item.price}</div>
+                <div className="item-price-tag">₱{parseFloat(item.price).toFixed(2)}</div>
               </div>
               
-              <button
-                className="request-btn"
-                onClick={() => this.setState({
-                  activeTab: 'request',
-                  requestForm: { ...this.state.requestForm, item_id: item.item_id }
-                })}
-                disabled={item.quantity === 0}
-              >
-                {item.quantity === 0 ? 'Out of Stock' : 'Request Item'}
-              </button>
+              <div className="item-card-footer">
+                <button
+                  className="request-btn-modern"
+                  onClick={() => this.setState({
+                    activeTab: 'request',
+                    requestForm: { ...this.state.requestForm, item_id: item.item_id }
+                  })}
+                  disabled={item.quantity === 0}
+                >
+                  {item.quantity === 0 ? 'Out of Stock' : 'Request This Item'}
+                </button>
+              </div>
             </div>
           ))}
         </div>
 
         {filteredItems.length === 0 && (
-          <div className="no-items">
-            <p>No items found matching your search criteria.</p>
+          <div className="no-items-found">
+            <div className="no-items-icon">🔎</div>
+            <h4>No items found</h4>
+            <p>We couldn't find any items matching your current filters.</p>
+            <button 
+              className="reset-filter-btn"
+              onClick={() => this.setState({ searchTerm: '', selectedCategory: 'all' })}
+            >
+              Reset All Filters
+            </button>
           </div>
         )}
       </div>

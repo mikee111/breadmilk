@@ -5,7 +5,6 @@ import Features from './components/Features';
 import About from './components/About';
 import HomeBelowProducts from './components/HomeBelowProducts';
 import Login from './components/Login';
-import Registration from './components/Registration';
 import UserDashboard from './components/UserDashboard';
 import UserDashboardSimple from './components/UserDashboardSimple';
 import AdminDashboard from './components/AdminDashboard';
@@ -60,7 +59,7 @@ function App() {
             }
           />
           <Route path="/login" element={<Login />} />
-          <Route path="/register" element={<Registration />} />
+          <Route path="/register" element={<Navigate to="/login" replace />} />
           <Route path="/dashboard" element={
             <UserRoute>
               <UserDashboard />

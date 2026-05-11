@@ -364,6 +364,38 @@ tbody tr:hover {
   }
 }
 
+/* KPI grid layout (fix wrapping whitespace) */
+.dashboard-kpi-grid {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+}
+
+@media (min-width: 1024px) {
+  .dashboard-kpi-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-auto-rows: minmax(108px, auto);
+    align-items: stretch;
+  }
+
+  .dashboard-kpi-primary {
+    grid-column: span 2;
+    grid-row: span 2;
+  }
+
+  .dashboard-kpi-card {
+    min-height: 108px;
+  }
+}
+
+/* Charts & analytics: keep 3-up on desktop */
+@media (min-width: 1200px) {
+  .dashboard-analytics-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+    align-items: stretch;
+  }
+}
+
 /* Scrollbar styling for webkit browsers */
 .dashboard-sidebar::-webkit-scrollbar {
   width: 6px;

@@ -93,4 +93,3 @@ function FeaturedProductsCarousel() {
 }
 
 export default FeaturedProductsCarousel;
-

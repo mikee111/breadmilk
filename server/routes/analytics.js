@@ -1,6 +1,20 @@
 const express = require('express');
 const router = express.Router();
-const db = require('../config/database');
+const db = require('../database');
+
+// Helper function to execute queries and release connection
+async function executeQuery(query, params = []) {
+    let connection;
+    try {
+        connection = await db.getConnection();
+        const [rows] = await connection.execute(query, params);
+        return rows;
+    } finally {
+        if (connection) {
+            connection.release();
+        }
+    }
+}
 
 // Get inventory analytics
 router.get('/inventory', async (req, res) => {
@@ -27,9 +41,9 @@ router.get('/inventory', async (req, res) => {
             GROUP BY category
         `;
 
-        const [velocity] = await db.execute(velocityQuery);
-        const [abc] = await db.execute(abcQuery);
-        const [categories] = await db.execute(categoryQuery);
+        const velocity = await executeQuery(velocityQuery);
+        const abc = await executeQuery(abcQuery);
+        const categories = await executeQuery(categoryQuery);
 
         res.json({
             success: true,
@@ -46,7 +60,7 @@ router.get('/inventory', async (req, res) => {
 });
 
 // Get demand forecasting
-router.get('/forecasting/:period?', async (req, res) => {
+router.get('/forecasting/:period', async (req, res) => {
     try {
         const period = req.params.period || 30;
         
@@ -64,7 +78,7 @@ router.get('/forecasting/:period?', async (req, res) => {
             LIMIT 12
         `;
 
-        const [forecast] = await db.execute(forecastQuery, [period]);
+        const forecast = await executeQuery(forecastQuery, [period]);
 
         res.json({
             success: true,
@@ -83,7 +97,41 @@ router.get('/forecasting/:period?', async (req, res) => {
     }
 });
 
-module.exports = router;
+// Get data for Smart Restocking
+router.get('/smart-restocking-data', async (req, res) => {
+    try {
+        const inventoryItems = await executeQuery(`SELECT * FROM inventory`);
+        const salesData = await executeQuery(`SELECT * FROM sales`); // Assuming a 'sales' table exists
+
+        res.json({
+            success: true,
+            data: {
+                inventoryItems,
+                salesData
+            }
+        });
+    } catch (error) {
+        console.error('Smart Restocking data error:', error);
+        res.status(500).json({ success: false, message: error.message });
+    }
+});
+
+// Temporary endpoint to check data counts
+router.get('/check-data', async (req, res) => {
+    try {
+        const inventoryCount = await executeQuery(`SELECT COUNT(*) as count FROM inventory`);
+        const salesCount = await executeQuery(`SELECT COUNT(*) as count FROM sales`);
+
+        res.json({
+            success: true,
+            data: {
+                inventoryCount: inventoryCount[0].count,
+                salesCount: salesCount[0].count
+            }
+        });
+    } catch (error) {
+        console.error('Check data error:', error);
+        res.status(500).json({ success: false, message: error.message });
     }
 });
 

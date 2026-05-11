@@ -1,10 +1,13 @@
-// UserDashboard.js - Reborn Version 2.0
+  // UserDashboard.js - Reborn Version 2.0
 // Modern Breadmilk Inventory Management System
 
 import React, { Component } from 'react';
 import './UserDashboard.css';
 import ChevronDown from './ChevronDown';
-import DataPredictions from './DataPredictions';
+import { ResponsiveContainer, BarChart, Bar, PieChart, Pie, Cell, LineChart, Line, CartesianGrid, XAxis, YAxis, Tooltip, Legend } from 'recharts';
+import DemandForecasting from './DemandForecasting';
+import SeasonalPredictions from './SeasonalPredictions';
+import SmartRestocking from './SmartRestocking';
 
 export default class UserDashboard extends Component {
   constructor(props) {
@@ -21,6 +24,7 @@ export default class UserDashboard extends Component {
       showRecordSaleModal: false,
       salesLoading: false,
       salesError: null,
+      dashboardSalesPeriod: 'today',
       openDropdown: null,
       mainContent: 'dashboard', // Set default main content to dashboard homepage
       inventoryItems: [], // Add inventory items state
@@ -30,6 +34,7 @@ export default class UserDashboard extends Component {
       lowStockThreshold: 10, // Changed from 50 to 10 to match your data
       salesSummary: null,
       error: null,
+      smartRestockingData: [], // New state for SmartRestocking
       // Add Items functionality
       addItemsRows: [
         { itemName: '', quantity: '', price: '', category: '' },
@@ -51,6 +56,13 @@ export default class UserDashboard extends Component {
       updateItemQuantity: '',
       updateItemPrice: '',
       updateItemCategory: '',
+      stockAddInputs: {},
+      stockAdjustInputs: {},
+      stockAdjustLoading: {},
+      quickSaleInputs: {},
+      selectedAllItemsItemId: null,
+      showAllItemsActionPanel: false,
+      returnToAllItemsAfterUpdate: false,
       // Advanced Analytics and Graphs
       salesTrends: [],
       inventoryTrends: [],
@@ -64,8 +76,19 @@ export default class UserDashboard extends Component {
       userRequests: [],
       requestStats: null,
       selectedRequest: null,
-      requestFilter: 'all' // all, pending, approved, rejected
+      requestFilter: 'all', // all, pending, approved, rejected
+      liveTransactionEvents: [],
+      liveFeedNow: Date.now(),
+      topSearchQuery: '',
+      showAlertsPanel: false,
+      toast: {
+        visible: false,
+        message: '',
+        type: 'success'
+      }
     };
+    this.toastTimer = null;
+    this.liveFeedTimer = null;
 
     // Bind ALL methods in constructor - this is the key fix
     this.checkLogin = this.checkLogin.bind(this);
@@ -86,6 +109,8 @@ export default class UserDashboard extends Component {
     this.removeItemsRow = this.removeItemsRow.bind(this);
     this.saveAllItems = this.saveAllItems.bind(this);
     this.clearAddItemsForm = this.clearAddItemsForm.bind(this);
+    this.getSuggestedCategory = this.getSuggestedCategory.bind(this);
+    this.applySuggestedCategory = this.applySuggestedCategory.bind(this);
     // Categories methods
     this.handleAddCategory = this.handleAddCategory.bind(this);
     this.handleUpdateCategory = this.handleUpdateCategory.bind(this);
@@ -94,6 +119,17 @@ export default class UserDashboard extends Component {
     this.handleUpdateItemSelect = this.handleUpdateItemSelect.bind(this);
     this.handleUpdateItemChange = this.handleUpdateItemChange.bind(this);
     this.saveItemUpdate = this.saveItemUpdate.bind(this);
+    this.openItemUpdateFromAllItems = this.openItemUpdateFromAllItems.bind(this);
+    this.handleDeleteInventoryItem = this.handleDeleteInventoryItem.bind(this);
+    this.applyQuantityShortcut = this.applyQuantityShortcut.bind(this);
+    this.handleStockAddInputChange = this.handleStockAddInputChange.bind(this);
+    this.applyCriticalStockAdd = this.applyCriticalStockAdd.bind(this);
+    this.handleStockAdjustInputChange = this.handleStockAdjustInputChange.bind(this);
+    this.handleAdjustStock = this.handleAdjustStock.bind(this);
+    this.handleQuickSaleInputChange = this.handleQuickSaleInputChange.bind(this);
+    this.handleQuickSale = this.handleQuickSale.bind(this);
+    this.handleAllItemsRowSelect = this.handleAllItemsRowSelect.bind(this);
+    this.closeAllItemsActionPanel = this.closeAllItemsActionPanel.bind(this);
     // User Management methods
     this.handleAddUserChange = this.handleAddUserChange.bind(this);
     this.handleAddUser = this.handleAddUser.bind(this);
@@ -126,11 +162,23 @@ export default class UserDashboard extends Component {
         this.generateComprehensiveAnalytics();
       }, 500);
     }, 100);
+
+    this.liveFeedTimer = setInterval(() => {
+      this.setState({ liveFeedNow: Date.now() });
+      this.fetchSalesData();
+      this.fetchInventoryItems();
+    }, 20000);
   }
 
   componentWillUnmount() {
     window.removeEventListener('storage', this.checkLogin);
     window.removeEventListener('focus', this.checkLogin);
+    if (this.toastTimer) {
+      clearTimeout(this.toastTimer);
+    }
+    if (this.liveFeedTimer) {
+      clearInterval(this.liveFeedTimer);
+    }
   }
 
   checkLogin() {
@@ -435,9 +483,63 @@ export default class UserDashboard extends Component {
   }
 
   // Add Items Methods
+  getSuggestedCategory(itemName) {
+    const input = (itemName || '').toLowerCase().trim();
+    if (!input) {
+      return '';
+    }
+
+    const rules = [
+      { category: 'Dairy', keywords: ['milk', 'cheese', 'yogurt', 'butter', 'cream'] },
+      { category: 'Personal Care', keywords: ['shampoo', 'soap', 'conditioner', 'toothpaste', 'lotion'] },
+      { category: 'Beverages', keywords: ['juice', 'soda', 'coffee', 'tea', 'water'] },
+      { category: 'Bakery', keywords: ['bread', 'bun', 'cake', 'croissant', 'pastry'] },
+      { category: 'Snacks', keywords: ['chips', 'cracker', 'cookie', 'biscuit'] }
+    ];
+
+    const match = rules.find((rule) => rule.keywords.some((keyword) => input.includes(keyword)));
+    return match ? match.category : '';
+  }
+
+  applySuggestedCategory(index) {
+    const row = this.state.addItemsRows[index];
+    const suggestedCategory = this.getSuggestedCategory(row?.itemName);
+
+    if (!suggestedCategory) {
+      return;
+    }
+
+    this.handleAddItemsChange(index, 'category', suggestedCategory);
+  }
+
   handleAddItemsChange(index, field, value) {
+    let nextValue = value;
+
+    if (field === 'quantity') {
+      if (value === '') {
+        nextValue = '';
+      } else {
+        const parsed = parseInt(value, 10);
+        if (Number.isNaN(parsed)) {
+          return;
+        }
+        nextValue = String(Math.max(1, parsed));
+      }
+    }
+
+    if (field === 'price') {
+      if (value === '') {
+        nextValue = '';
+      } else if (/^\d*\.?\d*$/.test(value)) {
+        const parsed = parseFloat(value);
+        nextValue = Number.isNaN(parsed) ? '' : String(Math.max(0, parsed));
+      } else {
+        return;
+      }
+    }
+
     const updatedRows = this.state.addItemsRows.map((row, i) =>
-      i === index ? { ...row, [field]: value } : row
+      i === index ? { ...row, [field]: nextValue } : row
     );
     this.setState({ addItemsRows: updatedRows });
   }
@@ -467,6 +569,17 @@ export default class UserDashboard extends Component {
 
     if (validRows.length === 0) {
       alert('Please fill out at least one complete row before saving.');
+      return;
+    }
+
+    const invalidRows = validRows.filter(row => {
+      const quantityValue = parseInt(row.quantity, 10);
+      const priceValue = parseFloat(row.price);
+      return Number.isNaN(quantityValue) || quantityValue < 1 || Number.isNaN(priceValue) || priceValue < 0;
+    });
+
+    if (invalidRows.length > 0) {
+      alert('Please fix validation errors: quantity must be at least 1 and price must be at least 0.');
       return;
     }
 
@@ -655,12 +768,12 @@ export default class UserDashboard extends Component {
     } = this.state;
 
     if (!selectedUpdateItem) {
-      alert('Please select an item to update');
+      this.showToast('Please select an item to update', 'error');
       return;
     }
 
     if (!updateItemName || !updateItemQuantity || !updateItemPrice || !updateItemCategory) {
-      alert('Please fill all fields');
+      this.showToast('Please fill all fields', 'error');
       return;
     }
 
@@ -669,7 +782,7 @@ export default class UserDashboard extends Component {
       const itemId = selectedUpdateItem.item_id || selectedUpdateItem.id;
       
       if (!itemId) {
-        alert('Error: Item ID not found');
+        this.showToast('Error: Item ID not found', 'error');
         return;
       }
       
@@ -700,23 +813,312 @@ export default class UserDashboard extends Component {
       console.log('Update response:', result);
 
       if (response.ok && result.success !== false) {
-        alert('✅ Item updated successfully!');
+        this.showToast('Item updated successfully');
         this.setState({
+          mainContent: 'all-items-table',
           selectedUpdateItem: null,
           updateItemName: '',
           updateItemQuantity: '',
           updateItemPrice: '',
-          updateItemCategory: ''
+          updateItemCategory: '',
+          selectedAllItemsItemId: null,
+          showAllItemsActionPanel: false,
+          returnToAllItemsAfterUpdate: false
         });
         await this.fetchInventoryItems(); // Refresh the items list
       } else {
         const errorMessage = result.message || result.error || 'Failed to update item';
         console.error('Update failed:', errorMessage);
-        alert(`❌ Error: ${errorMessage}`);
+        this.showToast(`Error: ${errorMessage}`, 'error');
       }
     } catch (error) {
       console.error('Error updating item:', error);
+      this.showToast('Network error: ' + error.message, 'error');
+    }
+  }
+
+  openItemUpdateFromAllItems(item) {
+    this.setState({
+      mainContent: 'update-items',
+      selectedUpdateItem: {
+        id: item.item_id || item.id,
+        name: item.item_name || item.name,
+        quantity: item.quantity,
+        price: item.price || 0,
+        category: item.category,
+        updated_at: item.updated_at || null
+      },
+      updateItemName: item.item_name || item.name || '',
+      updateItemQuantity: (item.quantity ?? 0).toString(),
+      updateItemPrice: (item.price ?? 0).toString(),
+      updateItemCategory: item.category || '',
+      returnToAllItemsAfterUpdate: true
+    });
+  }
+
+  handleAllItemsRowSelect(item) {
+    const itemId = item.item_id || item.id;
+    if (!itemId) {
+      return;
+    }
+
+    this.setState({
+      selectedAllItemsItemId: itemId,
+      showAllItemsActionPanel: true
+    });
+  }
+
+  closeAllItemsActionPanel() {
+    this.setState({
+      showAllItemsActionPanel: false,
+      selectedAllItemsItemId: null
+    });
+  }
+
+  async handleDeleteInventoryItem(item) {
+    const itemId = item.item_id || item.id;
+    const itemName = item.item_name || item.name || 'this item';
+
+    if (!itemId) {
+      this.showToast('Error: Item ID not found', 'error');
+      return;
+    }
+
+    if (!window.confirm(`Are you sure you want to delete "${itemName}"?`)) {
+      return;
+    }
+
+    try {
+      const response = await fetch(`http://localhost:5001/api/inventory/items/${itemId}`, {
+        method: 'DELETE'
+      });
+
+      if (!response.ok) {
+        const result = await response.json().catch(() => ({}));
+        const errorMessage = result.message || result.error || 'Failed to delete item';
+        this.showToast(`Error: ${errorMessage}`, 'error');
+        return;
+      }
+
+      // Immediate UI feedback + refresh from server for consistency
+      this.setState((prevState) => ({
+        inventoryItems: prevState.inventoryItems.filter((i) => (i.item_id || i.id) !== itemId),
+        selectedAllItemsItemId: prevState.selectedAllItemsItemId === itemId ? null : prevState.selectedAllItemsItemId,
+        showAllItemsActionPanel: prevState.selectedAllItemsItemId === itemId ? false : prevState.showAllItemsActionPanel
+      }));
+
+      await this.fetchInventoryItems();
+      await this.fetchCriticalItems();
+      this.showToast(`"${itemName}" deleted successfully.`);
+    } catch (error) {
+      this.showToast('Error deleting item: ' + error.message, 'error');
+    }
+  }
+
+  async applyQuantityShortcut(item, incrementValue = 15) {
+    try {
+      const itemId = item.item_id || item.id;
+      if (!itemId) {
+        alert('Error: Item ID not found');
+        return false;
+      }
+
+      const currentQuantity = parseFloat(item.quantity) || 0;
+      const updatedQuantity = currentQuantity + incrementValue;
+
+      const response = await fetch(`http://localhost:5001/api/inventory/items/${itemId}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          item_name: item.item_name || item.name || '',
+          quantity: updatedQuantity,
+          price: parseFloat(item.price) || 0,
+          category: item.category || 'Uncategorized'
+        })
+      });
+
+      const result = await response.json();
+      if (response.ok && result.success !== false) {
+        await this.fetchInventoryItems();
+        await this.fetchCriticalItems();
+        this.logTransactionEvent({
+          transactionType: 'Restock',
+          productName: item.item_name || item.name || 'Item',
+          quantity: incrementValue
+        });
+        return true;
+      } else {
+        const errorMessage = result.message || result.error || 'Failed to update quantity';
+        alert(`❌ Error: ${errorMessage}`);
+        return false;
+      }
+    } catch (error) {
       alert('❌ Network error: ' + error.message);
+      return false;
+    }
+  }
+
+  handleStockAddInputChange(itemId, value) {
+    this.setState((prevState) => ({
+      stockAddInputs: {
+        ...prevState.stockAddInputs,
+        [itemId]: value
+      }
+    }));
+  }
+
+  async applyCriticalStockAdd(item) {
+    const itemId = item.item_id || item.id;
+    const rawInput = this.state.stockAddInputs[itemId];
+    const parsed = parseInt(rawInput, 10);
+    const incrementValue = Number.isFinite(parsed) && parsed > 0 ? parsed : 19;
+
+    const isSuccess = await this.applyQuantityShortcut(item, incrementValue);
+    if (isSuccess) {
+      this.setState((prevState) => ({
+        stockAddInputs: {
+          ...prevState.stockAddInputs,
+          [itemId]: '19'
+        }
+      }));
+    }
+  }
+
+  handleStockAdjustInputChange(itemId, value) {
+    this.setState((prevState) => ({
+      stockAdjustInputs: {
+        ...prevState.stockAdjustInputs,
+        [itemId]: value
+      }
+    }));
+  }
+
+  async handleAdjustStock(item, operation) {
+    const itemId = item.item_id || item.id;
+    const itemName = item.item_name || item.name || 'Item';
+    const rawAmount = this.state.stockAdjustInputs[itemId];
+    const amount = parseInt(rawAmount, 10);
+
+    if (!itemId) {
+      this.showToast('Error: Item ID not found', 'error');
+      return;
+    }
+
+    if (!Number.isFinite(amount) || amount <= 0) {
+      this.showToast('Please enter a valid stock amount', 'error');
+      return;
+    }
+
+    const currentQty = parseInt(item.quantity, 10) || 0;
+    const nextQty = operation === 'add' ? currentQty + amount : currentQty - amount;
+    if (operation === 'subtract' && nextQty < 0) {
+      this.showToast(`Cannot subtract ${amount}. Only ${currentQty} in stock.`, 'error');
+      return;
+    }
+
+    this.setState((prevState) => ({
+      stockAdjustLoading: {
+        ...prevState.stockAdjustLoading,
+        [itemId]: true
+      }
+    }));
+
+    try {
+      const response = await fetch(`http://localhost:5001/api/inventory/items/${itemId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          item_name: item.item_name || item.name || '',
+          quantity: nextQty,
+          price: parseFloat(item.price) || 0,
+          category: item.category || 'Uncategorized'
+        })
+      });
+
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok || result.success === false) {
+        this.showToast(result.message || 'Failed to adjust stock', 'error');
+        return;
+      }
+
+      this.showToast(`${itemName} updated: ${currentQty} -> ${nextQty}`, 'success');
+      this.logTransactionEvent({
+        transactionType: operation === 'add' ? 'Restock' : 'Sale',
+        productName: itemName,
+        quantity: amount
+      });
+
+      await this.fetchInventoryItems();
+      await this.fetchCriticalItems();
+
+      this.setState((prevState) => ({
+        stockAdjustInputs: {
+          ...prevState.stockAdjustInputs,
+          [itemId]: ''
+        }
+      }));
+    } catch (error) {
+      this.showToast('Error adjusting stock: ' + error.message, 'error');
+    } finally {
+      this.setState((prevState) => ({
+        stockAdjustLoading: {
+          ...prevState.stockAdjustLoading,
+          [itemId]: false
+        }
+      }));
+    }
+  }
+
+  handleQuickSaleInputChange(itemId, value) {
+    this.setState(prevState => ({
+      quickSaleInputs: {
+        ...prevState.quickSaleInputs,
+        [itemId]: value
+      }
+    }));
+  }
+
+  async handleQuickSale(item) {
+    const itemId = item.item_id || item.id;
+    const quantity = parseInt(this.state.quickSaleInputs[itemId]);
+
+    if (isNaN(quantity) || quantity <= 0) {
+      this.showToast('Please enter a valid quantity to sell', 'error');
+      return;
+    }
+
+    if (quantity > item.quantity) {
+      this.showToast(`Not enough stock! Only ${item.quantity} available.`, 'error');
+      return;
+    }
+
+    try {
+      const response = await fetch('http://localhost:5001/api/sales', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          item_id: itemId,
+          quantity_sold: quantity
+        })
+      });
+
+      const result = await response.json();
+      if (response.ok) {
+        this.showToast(`Sold ${quantity} x ${item.name} successfully!`, 'success');
+        this.fetchInventoryItems();
+        this.fetchCriticalItems();
+        this.fetchSalesSummary();
+        this.fetchDailySales();
+        // Clear input
+        this.handleQuickSaleInputChange(itemId, '');
+      } else {
+        this.showToast(result.message || 'Failed to record sale', 'error');
+      }
+    } catch (error) {
+      console.error('Error recording quick sale:', error);
+      this.showToast('Error connecting to server', 'error');
     }
   }
 
@@ -930,7 +1332,8 @@ export default class UserDashboard extends Component {
 
   // Comprehensive Analytics Methods
   generateSalesTrends() {
-    const { salesData, dailySales, monthlySales } = this.state;
+    // Keep access to state in case future iterations use real series data
+    // (currently the chart uses simulated-but-realistic patterns).
     
     // Generate 30-day sales trend data
     const salesTrends = [];
@@ -1002,7 +1405,7 @@ export default class UserDashboard extends Component {
   }
 
   generateCategoryAnalytics() {
-    const { inventoryItems, salesData } = this.state;
+    const { inventoryItems } = this.state;
     
     const categoryMap = {};
     
@@ -1033,7 +1436,7 @@ export default class UserDashboard extends Component {
   }
 
   generatePerformanceMetrics() {
-    const { inventoryItems, salesData } = this.state;
+    const { inventoryItems } = this.state;
     const salesTrends = this.generateSalesTrends();
     
     const totalRevenue = salesTrends.reduce((sum, day) => sum + day.revenue, 0);
@@ -1079,6 +1482,356 @@ export default class UserDashboard extends Component {
     });
   }
 
+  /**
+   * Data Predictions: derives patterns from real sales + inventory (no ML backend).
+   */
+  buildDataPredictions() {
+    const { salesData = [], inventoryItems = [], lowStockThreshold = 10 } = this.state;
+    const dayMs = 86400000;
+    const now = new Date();
+    now.setHours(0, 0, 0, 0);
+    const todayStart = now.getTime();
+
+    const parseSaleDate = (sale) => {
+      const raw = sale.sale_date || sale.formatted_date || sale.created_at;
+      if (!raw) return null;
+      const d = new Date(raw);
+      return Number.isNaN(d.getTime()) ? null : d;
+    };
+
+    const dayStartTs = (d) => {
+      const x = new Date(d);
+      x.setHours(0, 0, 0, 0);
+      return x.getTime();
+    };
+
+    const normalizeName = (n) => String(n || '').trim().toLowerCase();
+
+    const saleKey = (sale) => {
+      const id = sale.item_id ?? sale.itemId ?? sale.itemID;
+      if (id != null && String(id).trim() !== '') {
+        const n = Number(id);
+        if (!Number.isNaN(n)) return `id:${n}`;
+      }
+      return `name:${normalizeName(sale.item_name || sale.name)}`;
+    };
+
+    const invKey = (item) => {
+      const id = item.item_id ?? item.id ?? item.itemID;
+      if (id != null && String(id).trim() !== '') {
+        const n = Number(id);
+        if (!Number.isNaN(n)) return `id:${n}`;
+      }
+      return `name:${normalizeName(item.item_name || item.name)}`;
+    };
+
+    const validSales = (salesData || [])
+      .map((s) => ({ raw: s, d: parseSaleDate(s) }))
+      .filter((x) => x.d !== null)
+      .sort((a, b) => a.d - b.d);
+
+    const byKey = {};
+    const dailyAll = {};
+
+    for (const { raw: s, d } of validSales) {
+      const k = saleKey(s);
+      const dayTs = dayStartTs(d);
+      const qty = parseInt(s.quantity_sold, 10) || 0;
+      const rev = parseFloat(s.total_amount) || 0;
+
+      if (!byKey[k]) {
+        byKey[k] = {
+          label: s.item_name || s.name || 'Unknown',
+          totalQty: 0,
+          totalRev: 0,
+          txCount: 0,
+          byDayMs: {}
+        };
+      }
+      const st = byKey[k];
+      st.totalQty += qty;
+      st.totalRev += rev;
+      st.txCount += 1;
+      const dk = String(dayTs);
+      st.byDayMs[dk] = (st.byDayMs[dk] || 0) + qty;
+
+      const iso = new Date(dayTs).toISOString().split('T')[0];
+      if (!dailyAll[iso]) dailyAll[iso] = { revenue: 0, units: 0 };
+      dailyAll[iso].revenue += rev;
+      dailyAll[iso].units += qty;
+    }
+
+    const sumQtyWindow = (byDayMs, startTs, endTs) => {
+      let sum = 0;
+      Object.keys(byDayMs).forEach((msStr) => {
+        const t = Number(msStr);
+        if (t >= startTs && t <= endTs) sum += byDayMs[t];
+      });
+      return sum;
+    };
+
+    const recentStart = todayStart - 13 * dayMs;
+    const recentEnd = todayStart;
+    const priorStart = todayStart - 27 * dayMs;
+    const priorEnd = todayStart - 14 * dayMs;
+    const last7Start = todayStart - 6 * dayMs;
+    const prev7Start = todayStart - 13 * dayMs;
+    const prev7End = todayStart - 7 * dayMs;
+
+    const rows = (inventoryItems || []).map((item) => {
+      const ik = invKey(item);
+      const st = byKey[ik] || {
+        label: item.item_name || item.name || 'Item',
+        totalQty: 0,
+        totalRev: 0,
+        txCount: 0,
+        byDayMs: {}
+      };
+
+      const stock = parseInt(item.quantity, 10) || 0;
+      const price = parseFloat(item.price) || 0;
+      const name = item.item_name || item.name || st.label || 'Item';
+      const category = item.category || '—';
+
+      const recentQty = sumQtyWindow(st.byDayMs, recentStart, recentEnd);
+      const priorQty = sumQtyWindow(st.byDayMs, priorStart, priorEnd);
+
+      const recentAvgDaily = recentQty / 14;
+      const priorAvgDaily = priorQty / 14;
+
+      let trendPct = 0;
+      if (priorAvgDaily <= 1e-6) {
+        trendPct = recentAvgDaily > 1e-6 ? 100 : 0;
+      } else {
+        trendPct = Math.round(((recentAvgDaily - priorAvgDaily) / priorAvgDaily) * 100);
+      }
+
+      let daysCover = null;
+      if (recentAvgDaily > 1e-6) daysCover = stock / recentAvgDaily;
+
+      let shortageRisk = null;
+      if (stock === 0 && recentAvgDaily > 0.05) shortageRisk = 'critical';
+      else if (daysCover !== null && daysCover < 5 && recentAvgDaily > 1e-6) shortageRisk = 'high';
+      else if (daysCover !== null && daysCover < 10 && recentAvgDaily > 1e-6) shortageRisk = 'medium';
+      else if (stock <= lowStockThreshold && recentAvgDaily > 1e-6) shortageRisk = 'medium';
+
+      const targetCoverDays = 14;
+      let suggestedReorder = 0;
+      if (recentAvgDaily > 1e-6) {
+        suggestedReorder = Math.max(0, Math.ceil(recentAvgDaily * targetCoverDays - stock));
+      } else if (stock <= lowStockThreshold && stock >= 0) {
+        suggestedReorder = Math.max(0, Math.ceil(lowStockThreshold * 2 - stock));
+      }
+
+      const avgUnitPriceFromSales =
+        st.totalQty > 0 ? st.totalRev / st.totalQty : price || 0;
+
+      return {
+        id: item.item_id ?? item.id,
+        name,
+        category,
+        stock,
+        price,
+        recentQty,
+        priorQty,
+        recentAvgDaily,
+        trendPct,
+        daysCover,
+        shortageRisk,
+        suggestedReorder,
+        totalSoldAllTime: st.totalQty,
+        avgUnitPriceFromSales,
+      };
+    });
+
+    const fastSelling = [...rows].filter((r) => r.recentQty > 0).sort((a, b) => b.recentQty - a.recentQty).slice(0, 10);
+
+    const slowMoving = [...rows].filter((r) => r.stock > lowStockThreshold && r.recentQty === 0 && r.stock > 0)
+      .sort((a, b) => b.stock - a.stock)
+      .slice(0, 10);
+
+    const increasingDemand = [...rows].filter((r) => r.trendPct >= 15 && r.recentQty >= 3)
+      .sort((a, b) => b.trendPct - a.trendPct)
+      .slice(0, 10);
+
+    const scoreRestock = (r) => {
+      let score = 0;
+      if (r.shortageRisk === 'critical') score += 100;
+      else if (r.shortageRisk === 'high') score += 70;
+      else if (r.shortageRisk === 'medium') score += 40;
+      score += Math.min(40, Math.round(r.recentAvgDaily * 10));
+      score += Math.min(25, Math.max(0, 100 - (r.daysCover != null ? r.daysCover : 999) * 3));
+      return score;
+    };
+
+    const restockPriority = [...rows]
+      .filter((r) => r.shortageRisk && r.suggestedReorder > 0)
+      .sort((a, b) => scoreRestock(b) - scoreRestock(a))
+      .slice(0, 12);
+
+    const atRiskCount = rows.filter((r) => r.shortageRisk === 'critical' || r.shortageRisk === 'high').length;
+
+    const dailyIsoKeys = Object.keys(dailyAll).sort();
+    const lastIso = dailyIsoKeys.length ? dailyIsoKeys[dailyIsoKeys.length - 1] : new Date(todayStart).toISOString().split('T')[0];
+    const lastDate = new Date(`${lastIso}T00:00:00`);
+
+    const dailyTrend = [];
+    for (let i = 27; i >= 0; i--) {
+      const dd = new Date(lastDate);
+      dd.setDate(dd.getDate() - i);
+      const iso = dd.toISOString().split('T')[0];
+      const entry = dailyAll[iso] || { revenue: 0, units: 0 };
+      dailyTrend.push({
+        date: dd.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }),
+        revenue: Number(entry.revenue.toFixed(2)),
+        units: entry.units,
+      });
+    }
+
+    const sumDailyRange = (startTs, endTs) => {
+      let rev = 0;
+      let units = 0;
+      const cur = new Date(startTs);
+      const end = new Date(endTs);
+      while (cur <= end) {
+        const iso = cur.toISOString().split('T')[0];
+        if (dailyAll[iso]) {
+          rev += dailyAll[iso].revenue;
+          units += dailyAll[iso].units;
+        }
+        cur.setDate(cur.getDate() + 1);
+      }
+      return { rev, units };
+    };
+
+    const last7 = sumDailyRange(last7Start, recentEnd);
+    const prev7 = sumDailyRange(prev7Start, prev7End);
+
+    const last7AvgDailyRev = last7.rev / 7;
+    const prev7AvgDailyRev = prev7.rev / 7;
+    let revTrendPct = 0;
+    if (prev7AvgDailyRev <= 1e-6) revTrendPct = last7AvgDailyRev > 1e-6 ? 100 : 0;
+    else revTrendPct = Math.round(((last7AvgDailyRev - prev7AvgDailyRev) / prev7AvgDailyRev) * 100);
+
+    const growthFactor = 1 + Math.min(0.25, Math.max(-0.2, revTrendPct / 200));
+    const projectedNext7Revenue = Number((last7AvgDailyRev * 7 * growthFactor).toFixed(2));
+    const projectedNext7Units = Math.max(0, Math.round((last7.units / 7) * 7 * growthFactor));
+
+    const insightBullets = [];
+    if (validSales.length === 0) {
+      insightBullets.push('No dated sales records were found. When you record sales with dates, this view will show velocity, trends, and shortage risk per product.');
+    } else {
+      insightBullets.push(
+        `Analysis uses ${validSales.length} sale line(s) across ${dailyIsoKeys.length} day(s) with activity.`
+      );
+      if (atRiskCount > 0) {
+        insightBullets.push(
+          `${atRiskCount} product(s) show elevated shortage risk based on recent sell-through vs on-hand stock. Prioritize restocking or reducing promotions on thin coverage items.`
+        );
+      } else {
+        insightBullets.push('No critical sell-through shortages detected in the last 14 days for matched inventory items.');
+      }
+      const topFast = fastSelling[0];
+      if (topFast) {
+        insightBullets.push(
+          `Fast mover: "${topFast.name}" sold ${topFast.recentQty} unit(s) in the last 14 days — monitor coverage and reorder lead time ahead of spikes.`
+        );
+      }
+      const topInc = increasingDemand[0];
+      if (topInc) {
+        insightBullets.push(
+          `Rising demand: "${topInc.name}" is up about ${topInc.trendPct}% in daily run-rate vs the prior 14 days — prepare stock before uplift turns into outages.`
+        );
+      }
+      const topSlow = slowMoving[0];
+      if (topSlow) {
+        insightBullets.push(
+          `"${topSlow.name}" has steady on-hand (${topSlow.stock}) but zero sales in the last 14 days — consider promotions, bundles, or reduced purchasing to limit overstock.`
+        );
+      }
+      insightBullets.push(
+        `Next-week revenue outlook ( heuristic ): about ₱${projectedNext7Revenue.toLocaleString()} based on last week’s average with a small trend adjustment (${revTrendPct >= 0 ? '+' : ''}${revTrendPct}% vs prior week).`
+      );
+    }
+
+    return {
+      validSalesCount: validSales.length,
+      atRiskCount,
+      fastSelling,
+      slowMoving,
+      increasingDemand,
+      restockPriority,
+      dailyTrend,
+      summary: {
+        last7Revenue: Number(last7.rev.toFixed(2)),
+        prev7Revenue: Number(prev7.rev.toFixed(2)),
+        last7Units: last7.units,
+        revTrendPct,
+        projectedNext7Revenue,
+        projectedNext7Units,
+      },
+      insightBullets,
+    };
+  }
+
+  showToast = (message, type = 'success') => {
+    if (this.toastTimer) {
+      clearTimeout(this.toastTimer);
+    }
+
+    this.setState({
+      toast: {
+        visible: true,
+        message,
+        type
+      }
+    });
+
+    this.toastTimer = setTimeout(() => {
+      this.setState((prevState) => ({
+        toast: {
+          ...prevState.toast,
+          visible: false
+        }
+      }));
+    }, 2600);
+  };
+
+  logTransactionEvent = ({ transactionType, productName, quantity }) => {
+    const event = {
+      id: `evt-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      transactionType,
+      productName,
+      quantity: parseInt(quantity, 10) || 0,
+      timestamp: new Date().toISOString()
+    };
+
+    this.setState((prevState) => ({
+      liveTransactionEvents: [event, ...(prevState.liveTransactionEvents || [])].slice(0, 50),
+      liveFeedNow: Date.now()
+    }));
+  };
+
+  getRelativeTimeLabel = (value) => {
+    const dateValue = new Date(value);
+    if (Number.isNaN(dateValue.getTime())) {
+      return 'just now';
+    }
+
+    const diffSeconds = Math.max(1, Math.floor((Date.now() - dateValue.getTime()) / 1000));
+    if (diffSeconds < 10) return 'just now';
+    if (diffSeconds < 60) return `${diffSeconds} seconds ago`;
+    const diffMinutes = Math.floor(diffSeconds / 60);
+    if (diffMinutes === 1) return '1 minute ago';
+    if (diffMinutes < 60) return `${diffMinutes} minutes ago`;
+    const diffHours = Math.floor(diffMinutes / 60);
+    if (diffHours === 1) return '1 hour ago';
+    if (diffHours < 24) return `${diffHours} hours ago`;
+    const diffDays = Math.floor(diffHours / 24);
+    if (diffDays === 1) return '1 day ago';
+    return `${diffDays} days ago`;
+  };
+
   render() {
     const { 
       loading, 
@@ -1088,9 +1841,10 @@ export default class UserDashboard extends Component {
       selectedSaleItem,
       saleQuantity,
       dailySales,
+      salesSummary,
       criticalItems,
       showCriticalAlert,
-      error
+      toast
     } = this.state;
 
     if (loading) {
@@ -1105,17 +1859,222 @@ export default class UserDashboard extends Component {
       return null;
     }
 
+    const HEADER_HEIGHT = 70;
+    const LAYOUT_TOP_OFFSET = HEADER_HEIGHT;
+    const selectedAllItemsItem = this.state.inventoryItems.find(
+      (item) => (item.item_id || item.id) === this.state.selectedAllItemsItemId
+    );
+    const totalProducts = this.state.inventoryItems.length;
+    const totalStockQuantity = this.state.inventoryItems.reduce(
+      (sum, item) => sum + (parseInt(item.quantity, 10) || 0),
+      0
+    );
+    const outOfStockItemsCount = this.state.inventoryItems.filter(
+      (item) => (parseInt(item.quantity, 10) || 0) === 0
+    ).length;
+    const lowStockItemsCount = this.state.inventoryItems.filter((item) => {
+      const qty = parseInt(item.quantity, 10) || 0;
+      return qty > 0 && qty <= this.state.lowStockThreshold;
+    }).length;
+    const stockStatusForItem = (item) => {
+      const qty = parseInt(item.quantity, 10) || 0;
+      if (qty <= 0) {
+        return { key: 'critical', label: 'Critical (Out of Stock)', color: '#b91c1c', bg: '#fee2e2' };
+      }
+      if (qty <= this.state.lowStockThreshold) {
+        return { key: 'low', label: 'Low Stock', color: '#c2410c', bg: '#ffedd5' };
+      }
+      return { key: 'normal', label: 'Normal', color: '#166534', bg: '#dcfce7' };
+    };
+    const affectedStockItems = this.state.inventoryItems
+      .map((item) => ({ ...item, stockStatus: stockStatusForItem(item) }))
+      .filter((item) => item.stockStatus.key !== 'normal')
+      .sort((a, b) => (parseInt(a.quantity, 10) || 0) - (parseInt(b.quantity, 10) || 0));
+    const todayRevenue = parseFloat(
+      (salesSummary && salesSummary.today && salesSummary.today.total_revenue) ||
+      (dailySales && dailySales.summary && dailySales.summary.total_revenue) ||
+      0
+    ) || 0;
+    const monthRevenue = parseFloat(
+      (salesSummary && salesSummary.month && salesSummary.month.total_revenue) || 0
+    ) || 0;
+    const weekStartDate = new Date();
+    weekStartDate.setHours(0, 0, 0, 0);
+    weekStartDate.setDate(weekStartDate.getDate() - 6);
+    const weekRevenue = (this.state.salesData || []).reduce((sum, sale) => {
+      const saleDateRaw = sale.sale_date || sale.formatted_date || sale.created_at;
+      if (!saleDateRaw) {
+        return sum;
+      }
+      const parsedSaleDate = new Date(saleDateRaw);
+      if (Number.isNaN(parsedSaleDate.getTime())) {
+        return sum;
+      }
+      const normalizedSaleDate = new Date(parsedSaleDate);
+      normalizedSaleDate.setHours(0, 0, 0, 0);
+      if (normalizedSaleDate < weekStartDate) {
+        return sum;
+      }
+      return sum + (parseFloat(sale.total_amount) || 0);
+    }, 0);
+    const salesByPeriod = {
+      today: todayRevenue,
+      week: weekRevenue,
+      month: monthRevenue
+    };
+    const selectedSalesLabel = this.state.dashboardSalesPeriod === 'today'
+      ? 'Today'
+      : this.state.dashboardSalesPeriod === 'week'
+        ? 'This Week'
+        : 'This Month';
+    const selectedSalesValue = salesByPeriod[this.state.dashboardSalesPeriod] || 0;
+    const topSellingMap = (this.state.salesData || []).reduce((acc, sale) => {
+      const itemName = sale.item_name || sale.name || 'Unknown';
+      const quantity = parseInt(sale.quantity_sold, 10) || 0;
+      const revenue = parseFloat(sale.total_amount) || 0;
+      if (!acc[itemName]) {
+        acc[itemName] = { name: itemName, quantity: 0, revenue: 0 };
+      }
+      acc[itemName].quantity += quantity;
+      acc[itemName].revenue += revenue;
+      return acc;
+    }, {});
+    const topSellingProductsData = Object.values(topSellingMap)
+      .sort((a, b) => b.quantity - a.quantity)
+      .slice(0, 6);
+    const categoryMap = this.state.inventoryItems.reduce((acc, item) => {
+      const category = item.category || 'Uncategorized';
+      if (!acc[category]) {
+        acc[category] = 0;
+      }
+      acc[category] += 1;
+      return acc;
+    }, {});
+    const categoryDistributionData = Object.entries(categoryMap).map(([name, value]) => ({
+      name,
+      value
+    }));
+    const trendMap = (this.state.salesData || []).reduce((acc, sale) => {
+      const saleDateRaw = sale.sale_date || sale.formatted_date || sale.created_at;
+      if (!saleDateRaw) {
+        return acc;
+      }
+      const parsed = new Date(saleDateRaw);
+      if (Number.isNaN(parsed.getTime())) {
+        return acc;
+      }
+      const key = parsed.toISOString().split('T')[0];
+      if (!acc[key]) {
+        acc[key] = { revenue: 0, quantity: 0 };
+      }
+      acc[key].revenue += parseFloat(sale.total_amount) || 0;
+      acc[key].quantity += parseInt(sale.quantity_sold, 10) || 0;
+      return acc;
+    }, {});
+    const salesTrendData = Object.entries(trendMap)
+      .sort((a, b) => new Date(a[0]) - new Date(b[0]))
+      .slice(-7)
+      .map(([date, values]) => ({
+        date: new Date(date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }),
+        revenue: Number(values.revenue.toFixed(2)),
+        quantity: values.quantity
+      }));
+    const pieColors = ['#0ea5e9', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#14b8a6', '#f97316'];
+    const baseCardStyle = {
+      borderRadius: 14,
+      padding: 20
+    };
+    const searchQuery = (this.state.topSearchQuery || '').trim().toLowerCase();
+    const matchesSearch = (value) => String(value || '').toLowerCase().includes(searchQuery);
+    const pendingRequestCount = this.state.requestStats?.pending || 0;
+    const notificationCount = lowStockItemsCount + outOfStockItemsCount + pendingRequestCount;
+    const matchingRequests = (this.state.userRequests || []).filter((request) =>
+      !searchQuery || matchesSearch(
+        `${request.item_name || ''} ${request.firstname || ''} ${request.lastname || ''} ${request.user_email || ''} ${request.note || ''} ${request.status || ''}`
+      )
+    );
+    const matchingPendingRequestCount = matchingRequests.filter((request) => request.status === 'pending').length;
+    const salesFeedEvents = (this.state.salesData || [])
+      .map((sale, index) => ({
+        id: `sale-${sale.sale_id || sale.id || index}-${sale.sale_date || sale.created_at || index}`,
+        transactionType: 'Sale',
+        productName: sale.item_name || sale.name || 'Item',
+        quantity: parseInt(sale.quantity_sold, 10) || 0,
+        timestamp: sale.sale_date || sale.created_at || sale.formatted_date || new Date().toISOString()
+      }))
+      .filter((event) => event.quantity > 0);
+    const allTransactionEvents = [...(this.state.liveTransactionEvents || []), ...salesFeedEvents]
+      .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))
+      .slice(0, 40);
+    const visibleAffectedStockItems = searchQuery
+      ? affectedStockItems.filter((item) =>
+          matchesSearch(`${item.name || ''} ${item.category || ''} ${item.stockStatus?.label || ''}`)
+        )
+      : affectedStockItems;
+    const visibleTransactionEvents = searchQuery
+      ? allTransactionEvents.filter((event) =>
+          matchesSearch(`${event.productName || ''} ${event.transactionType || ''}`)
+        )
+      : allTransactionEvents;
+    const visibleTopSellingProductsData = searchQuery
+      ? topSellingProductsData.filter((item) => matchesSearch(item.name))
+      : topSellingProductsData;
+    const visibleCategoryDistributionData = searchQuery
+      ? categoryDistributionData.filter((item) => matchesSearch(item.name))
+      : categoryDistributionData;
+    const categoryTotalCount = (visibleCategoryDistributionData || []).reduce((sum, item) => sum + (Number(item.value) || 0), 0);
+    const sortedCategoriesForSummary = [...(visibleCategoryDistributionData || [])]
+      .sort((a, b) => (Number(b.value) || 0) - (Number(a.value) || 0));
+    const topCategoriesForSummary = sortedCategoriesForSummary.slice(0, 6);
+    const uncategorizedForSummary = sortedCategoriesForSummary.find((item) => String(item.name || '').toLowerCase() === 'uncategorized');
+    const fastMovingProducts = visibleTransactionEvents.reduce((acc, event) => {
+      if (event.transactionType !== 'Sale') {
+        return acc;
+      }
+      acc[event.productName] = (acc[event.productName] || 0) + event.quantity;
+      return acc;
+    }, {});
+    const topFastMovingProducts = Object.entries(fastMovingProducts)
+      .map(([name, quantity]) => ({ name, quantity }))
+      .sort((a, b) => b.quantity - a.quantity)
+      .slice(0, 4);
+
     return (
       <div className="dashboard-root" style={{
         background: 'linear-gradient(135deg, #f8fafc 0%, #e2e8f0 100%)',
         minHeight: '100vh',
-        fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif"
+        fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
+        margin: 0,
+        padding: 0,
+        width: '100%',
+        overflowX: 'hidden',
+        position: 'relative'
       }}>
+        {toast?.visible && (
+          <div
+            style={{
+              position: 'fixed',
+              top: '84px',
+              right: '16px',
+              zIndex: 1200,
+              background: toast.type === 'error' ? '#dc2626' : '#16a34a',
+              color: '#ffffff',
+              padding: '10px 14px',
+              borderRadius: '8px',
+              boxShadow: '0 8px 24px rgba(15, 23, 42, 0.2)',
+              fontSize: '13px',
+              fontWeight: '600',
+              maxWidth: '320px'
+            }}
+          >
+            {toast.message}
+          </div>
+        )}
         {/* Modern Header - Reborn Design */}
         <div className="dashboard-header" style={{
           background: 'linear-gradient(135deg, #1e293b 0%, #334155 50%, #475569 100%)',
           color: '#ffffff',
-          padding: '16px 32px',
+          padding: '12px 18px',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
@@ -1127,10 +2086,11 @@ export default class UserDashboard extends Component {
           zIndex: 1000,
           boxShadow: '0 8px 32px rgba(0, 0, 0, 0.12), 0 2px 6px rgba(0, 0, 0, 0.08)',
           backdropFilter: 'blur(20px)',
-          borderBottom: '1px solid rgba(255, 255, 255, 0.1)'
+          borderBottom: '1px solid rgba(255, 255, 255, 0.1)',
+          boxSizing: 'border-box'
         }}>
           {/* Left Section - Brand & Welcome */}
-          <div style={{ display: 'flex', alignItems: 'center', flex: 1 }}>
+          <div style={{ display: 'flex', alignItems: 'center', flex: 1, gap: '12px' }}>
             <div style={{
               background: 'linear-gradient(135deg, #f59e0b, #d97706)',
               width: '40px',
@@ -1139,7 +2099,6 @@ export default class UserDashboard extends Component {
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              marginRight: '16px',
               boxShadow: '0 4px 12px rgba(245, 158, 11, 0.4)'
             }}>
               <span style={{ fontSize: '20px' }}>🍞</span>
@@ -1163,97 +2122,90 @@ export default class UserDashboard extends Component {
                 Welcome back, {userInfo?.username || 'User'}
               </div>
             </div>
-          </div>
-
-          {/* Center Section - Navigation Pills */}
-          <div style={{ 
-            display: 'flex', 
-            alignItems: 'center', 
-            gap: '8px',
-            background: 'rgba(255, 255, 255, 0.1)',
-            padding: '8px',
-            borderRadius: '16px',
-            backdropFilter: 'blur(10px)'
-          }}>
-            {[
-              { label: 'Dashboard', key: 'dashboard', icon: '🏠' },
-              { label: 'Inventory', key: 'all-items-table', icon: '📦' },
-              { label: 'Sales', key: 'daily-sales', icon: '💰' },
-              { label: 'Analytics', key: 'comprehensive-analytics', icon: '📊' }
-            ].map((nav) => (
-              <button
-                key={nav.key}
-                onClick={() => this.setState({ mainContent: nav.key })}
-                style={{
-                  background: this.state.mainContent === nav.key 
-                    ? 'linear-gradient(135deg, #f59e0b, #d97706)' 
-                    : 'transparent',
-                  color: this.state.mainContent === nav.key ? '#fff' : '#cbd5e1',
-                  border: 'none',
-                  padding: '8px 16px',
-                  borderRadius: '12px',
-                  cursor: 'pointer',
-                  fontSize: '14px',
-                  fontWeight: '500',
-                  transition: 'all 0.3s ease',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '6px',
-                  whiteSpace: 'nowrap'
-                }}
-                onMouseEnter={(e) => {
-                  if (this.state.mainContent !== nav.key) {
-                    e.target.style.background = 'rgba(255, 255, 255, 0.1)';
-                    e.target.style.color = '#fff';
-                  }
-                }}
-                onMouseLeave={(e) => {
-                  if (this.state.mainContent !== nav.key) {
-                    e.target.style.background = 'transparent';
-                    e.target.style.color = '#cbd5e1';
-                  }
-                }}
-              >
-                <span>{nav.icon}</span>
-                <span>{nav.label}</span>
-              </button>
-            ))}
-          </div>
-
-          {/* Right Section - User Info & Logout */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-            {/* Notifications */}
             <div style={{
-              background: 'rgba(255, 255, 255, 0.1)',
-              padding: '8px',
-              borderRadius: '12px',
-              cursor: 'pointer',
-              transition: 'all 0.3s ease'
-            }}
-            onMouseEnter={(e) => e.target.style.background = 'rgba(255, 255, 255, 0.2)'}
-            onMouseLeave={(e) => e.target.style.background = 'rgba(255, 255, 255, 0.1)'}>
-              <span style={{ fontSize: '18px' }}>🔔</span>
-              {this.state.criticalItems?.length > 0 && (
-                <span style={{
-                  position: 'absolute',
-                  top: '12px',
-                  right: '140px',
-                  background: '#ef4444',
-                  color: 'white',
-                  borderRadius: '50%',
-                  width: '20px',
-                  height: '20px',
-                  fontSize: '10px',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  fontWeight: 'bold'
-                }}>
-                  {this.state.criticalItems.length}
-                </span>
-              )}
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              background: 'rgba(255, 255, 255, 0.12)',
+              border: '1px solid rgba(255, 255, 255, 0.16)',
+              borderRadius: '999px',
+              padding: '6px 10px'
+            }}>
+              <div style={{
+                width: '7px',
+                height: '7px',
+                borderRadius: '50%',
+                background: '#22c55e',
+                animation: 'pulse 2s infinite'
+              }}></div>
+              <span style={{ fontSize: '12px', fontWeight: '600', color: '#e2e8f0' }}>
+                Online
+              </span>
+              <span style={{ fontSize: '12px', color: 'rgba(226, 232, 240, 0.85)' }}>
+                {new Date().toLocaleTimeString()}
+              </span>
             </div>
+          </div>
 
+          {/* Right Section - Quick utilities, user info, actions */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginRight: '8px' }}>
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              background: 'rgba(15, 23, 42, 0.25)',
+              border: '1px solid rgba(148, 163, 184, 0.45)',
+              borderRadius: '10px',
+              padding: '6px 10px',
+              minWidth: '240px'
+            }}>
+              <span style={{ fontSize: '13px', color: '#cbd5e1' }}>🔎</span>
+              <input
+                type="text"
+                placeholder="Search products or requests..."
+                value={this.state.topSearchQuery}
+                onChange={(e) => this.setState({ topSearchQuery: e.target.value })}
+                style={{
+                  width: '100%',
+                  border: 'none',
+                  outline: 'none',
+                  background: 'transparent',
+                  color: '#f8fafc',
+                  fontSize: '13px',
+                  fontWeight: 500
+                }}
+              />
+            </div>
+            <button
+              onClick={() => this.setState((prev) => ({ showAlertsPanel: !prev.showAlertsPanel }))}
+              style={{
+                border: '1px solid rgba(148, 163, 184, 0.4)',
+                background: 'rgba(15, 23, 42, 0.3)',
+                color: '#f8fafc',
+                borderRadius: '10px',
+                padding: '8px 10px',
+                fontSize: '12px',
+                fontWeight: 700,
+                cursor: 'pointer'
+              }}
+            >
+              🔔 Alerts {notificationCount > 0 ? `(${notificationCount})` : ''}
+            </button>
+            <button
+              onClick={() => this.setState({ mainContent: 'record-sale' })}
+              style={{
+                border: '1px solid rgba(45, 212, 191, 0.4)',
+                background: 'linear-gradient(135deg, #0f766e, #14b8a6)',
+                color: '#ffffff',
+                borderRadius: '10px',
+                padding: '8px 12px',
+                fontSize: '12px',
+                fontWeight: 700,
+                cursor: 'pointer'
+              }}
+            >
+              + Quick Sale
+            </button>
             {/* User Avatar & Info */}
             <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
               <div style={{
@@ -1275,8 +2227,8 @@ export default class UserDashboard extends Component {
                 <span style={{ fontSize: '14px', fontWeight: '600' }}>
                   {userInfo?.username || 'Guest'}
                 </span>
-                <span style={{ fontSize: '11px', opacity: 0.6 }}>
-                  Admin • Online
+                <span style={{ fontSize: '11px', opacity: 0.85 }}>
+                  Admin Online
                 </span>
               </div>
             </div>
@@ -1313,74 +2265,166 @@ export default class UserDashboard extends Component {
             </button>
           </div>
         </div>
+        {this.state.showAlertsPanel && (
+          <div style={{
+            position: 'fixed',
+            top: '76px',
+            right: '112px',
+            width: '320px',
+            borderRadius: '12px',
+            background: '#ffffff',
+            border: '1px solid #cbd5e1',
+            boxShadow: '0 16px 30px rgba(15, 23, 42, 0.18)',
+            zIndex: 1300,
+            padding: '12px'
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+              <span style={{ fontSize: '13px', fontWeight: 800, color: '#0f172a' }}>Notifications</span>
+              <button
+                onClick={() => this.setState({ showAlertsPanel: false })}
+                style={{
+                  background: 'transparent',
+                  border: 'none',
+                  color: '#64748b',
+                  cursor: 'pointer',
+                  padding: 0,
+                  fontSize: '13px',
+                  fontWeight: 700
+                }}
+              >
+                Close
+              </button>
+            </div>
+            <div style={{ display: 'grid', gap: '8px', marginBottom: '10px' }}>
+              <div style={{ fontSize: '13px', color: '#334155' }}>Low Stock Items: <strong>{lowStockItemsCount}</strong></div>
+              <div style={{ fontSize: '13px', color: '#334155' }}>Out of Stock Items: <strong>{outOfStockItemsCount}</strong></div>
+              <div style={{ fontSize: '13px', color: '#334155' }}>
+                Pending Requests: <strong>{searchQuery ? matchingPendingRequestCount : pendingRequestCount}</strong>
+              </div>
+            </div>
+            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+              <button
+                onClick={() => this.setState({ showAlertsPanel: false, mainContent: 'critical-items' })}
+                style={{
+                  background: '#fef2f2',
+                  border: '1px solid #fecaca',
+                  color: '#991b1b',
+                  borderRadius: '8px',
+                  padding: '6px 10px',
+                  fontSize: '12px',
+                  fontWeight: 700,
+                  cursor: 'pointer'
+                }}
+              >
+                View Critical
+              </button>
+              <button
+                onClick={() => this.setState({ showAlertsPanel: false, mainContent: 'pending-requests' })}
+                style={{
+                  background: '#fffbeb',
+                  border: '1px solid #fde68a',
+                  color: '#92400e',
+                  borderRadius: '8px',
+                  padding: '6px 10px',
+                  fontSize: '12px',
+                  fontWeight: 700,
+                  cursor: 'pointer'
+                }}
+              >
+                Open Requests
+              </button>
+              <button
+                onClick={() => {
+                  this.fetchInventoryItems();
+                  this.fetchCriticalItems();
+                  this.fetchRequestStats();
+                  this.setState({ showAlertsPanel: false });
+                }}
+                style={{
+                  background: '#ecfeff',
+                  border: '1px solid #99f6e4',
+                  color: '#0f766e',
+                  borderRadius: '8px',
+                  padding: '6px 10px',
+                  fontSize: '12px',
+                  fontWeight: 700,
+                  cursor: 'pointer'
+                }}
+              >
+                Refresh
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* Main Container - Reborn Design */}
         <div style={{
-          marginTop: '70px',
+          marginTop: `${LAYOUT_TOP_OFFSET}px`,
           background: 'linear-gradient(135deg, #f8fafc 0%, #e2e8f0 100%)',
-          minHeight: 'calc(100vh - 70px)'
+          minHeight: `calc(100vh - ${LAYOUT_TOP_OFFSET}px)`
         }}>
-          {/* Status Bar */}
-          <div style={{
-            background: 'rgba(255, 255, 255, 0.7)',
-            backdropFilter: 'blur(20px)',
-            borderRadius: '0 0 24px 24px',
-            padding: '16px 32px',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            border: '1px solid rgba(255, 255, 255, 0.2)',
-            borderTop: 'none',
-            boxShadow: '0 8px 32px rgba(0, 0, 0, 0.08)'
-          }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '24px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <div style={{
-                  width: '8px',
-                  height: '8px',
-                  borderRadius: '50%',
-                  background: '#10b981',
-                  animation: 'pulse 2s infinite'
-                }}></div>
-                <span style={{ fontSize: '14px', fontWeight: '500', color: '#374151' }}>
-                  System Online
-                </span>
-              </div>
-              <div style={{ fontSize: '14px', color: '#6b7280' }}>
-                Last updated: {new Date().toLocaleTimeString()}
-              </div>
-            </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-              <span style={{ fontSize: '12px', color: '#6b7280' }}>
-                Items: {this.state.items?.length || 0}
-              </span>
-              <span style={{ fontSize: '12px', color: '#6b7280' }}>
-                Categories: {this.state.categories?.length || 0}
-              </span>
-              <span style={{ fontSize: '12px', color: '#6b7280' }}>
-                Users: {this.state.users?.length || 0}
-              </span>
-            </div>
-          </div>
-
-        <div className="dashboard-container" style={{ display: 'flex' }}>
+        <div className="dashboard-container" style={{ display: 'flex', margin: 0, padding: 0 }}>
           <nav className="dashboard-sidebar" style={{
-            background: 'rgba(255, 255, 255, 0.8)',
-            backdropFilter: 'blur(20px)',
+            background: 'rgba(255, 255, 255, 0.9)',
+            backdropFilter: 'blur(16px)',
             color: '#374151',
-            padding: '24px 16px',
-            borderRadius: '0 24px 24px 0',
-            boxShadow: '8px 0 32px rgba(0, 0, 0, 0.1)',
-            width: '280px',
-            height: 'calc(100vh - 142px)',
+            padding: '16px 12px',
+            borderRadius: '0',
+            boxShadow: '4px 0 18px rgba(15, 23, 42, 0.08)',
+            width: '264px',
+            height: `calc(100vh - ${LAYOUT_TOP_OFFSET}px)`,
             position: 'fixed',
-            top: '142px',
+            top: `${LAYOUT_TOP_OFFSET}px`,
             left: '0',
             overflowY: 'auto',
-            border: '1px solid rgba(255, 255, 255, 0.2)',
-            borderLeft: 'none'
+            border: '1px solid rgba(148, 163, 184, 0.25)',
+            borderLeft: 'none',
+            zIndex: 5
           }}>
             <ul style={{ listStyleType: 'none', padding: '0', margin: '0' }}>
+              <li style={{
+                fontSize: 11,
+                fontWeight: 800,
+                letterSpacing: '0.08em',
+                color: '#64748b',
+                margin: '0 8px 8px'
+              }}>
+                MAIN
+              </li>
+              <li
+                onClick={() => this.setState({ mainContent: 'dashboard' })}
+                style={{
+                  cursor: 'pointer',
+                  userSelect: 'none',
+                  display: 'flex',
+                  alignItems: 'center',
+                  padding: '11px 14px',
+                  borderRadius: '12px',
+                  background: this.state.mainContent === 'dashboard'
+                    ? 'linear-gradient(135deg, #0d9488, #14b8a6)'
+                    : 'rgba(255,255,255,0.7)',
+                  color: this.state.mainContent === 'dashboard' ? '#ffffff' : '#134e4a',
+                  marginBottom: '8px',
+                  transition: 'all 0.3s ease',
+                  border: '1px solid rgba(13, 148, 136, 0.25)',
+                  boxShadow: this.state.mainContent === 'dashboard' ? '0 4px 12px rgba(13, 148, 136, 0.35)' : 'none',
+                  fontWeight: '500'
+                }}
+                onMouseEnter={(e) => {
+                  if (this.state.mainContent !== 'dashboard') {
+                    e.target.style.background = 'rgba(13, 148, 136, 0.15)';
+                    e.target.style.transform = 'translateX(4px)';
+                  }
+                }}
+                onMouseLeave={(e) => {
+                  if (this.state.mainContent !== 'dashboard') {
+                    e.target.style.background = 'rgba(255,255,255,0.7)';
+                    e.target.style.transform = 'translateX(0px)';
+                  }
+                }}
+              >
+                🏠 Dashboard
+              </li>
               {/* Sales Management Dropdown */}
               <li
                 className="sidebar-dropdown"
@@ -1390,12 +2434,12 @@ export default class UserDashboard extends Component {
                   userSelect: 'none',
                   display: 'flex',
                   alignItems: 'center',
-                  padding: '14px 18px',
+                  padding: '11px 14px',
                   borderRadius: '12px',
                   background: openDropdown === 'sales' ? 
                     'linear-gradient(135deg, #0d9488, #14b8a6)' : 'rgba(255,255,255,0.7)',
                   color: openDropdown === 'sales' ? '#ffffff' : '#134e4a',
-                  marginBottom: '10px',
+                  marginBottom: '8px',
                   transition: 'all 0.3s ease',
                   border: '1px solid rgba(13, 148, 136, 0.25)',
                   boxShadow: openDropdown === 'sales' ? '0 4px 12px rgba(13, 148, 136, 0.35)' : 'none',
@@ -1501,6 +2545,15 @@ export default class UserDashboard extends Component {
                   </li>
                 </ul>
               )}
+              <li style={{
+                fontSize: 11,
+                fontWeight: 800,
+                letterSpacing: '0.08em',
+                color: '#64748b',
+                margin: '10px 8px 8px'
+              }}>
+                OPERATIONS
+              </li>
 
               {/* Inventory Management Dropdown */}
               <li
@@ -1552,33 +2605,6 @@ export default class UserDashboard extends Component {
                     }}
                   >
                     ➕ Add Items
-                  </li>
-                  <li
-                    onClick={() => this.setState({ mainContent: 'update-items' })}
-                    style={{ 
-                      cursor: 'pointer', 
-                      padding: '8px 12px', 
-                      fontSize: 14, 
-                      borderRadius: '4px', 
-                      marginBottom: '4px',
-                      color: this.state.mainContent === 'update-items' ? '#0f766e' : '#134e4a',
-                      background: this.state.mainContent === 'update-items' 
-                        ? 'linear-gradient(135deg, #0d9488, #14b8a6)' 
-                        : 'transparent',
-                      transition: 'all 0.3s ease'
-                    }}
-                    onMouseEnter={(e) => {
-                      if (this.state.mainContent !== 'update-items') {
-                        e.target.style.background = 'rgba(13, 148, 136, 0.15)';
-                      }
-                    }}
-                    onMouseLeave={(e) => {
-                      if (this.state.mainContent !== 'update-items') {
-                        e.target.style.background = 'transparent';
-                      }
-                    }}
-                  >
-                    🔄 Update Items
                   </li>
                   <li
                     onClick={() => this.setState({ mainContent: 'all-items-table' })}
@@ -1644,60 +2670,6 @@ export default class UserDashboard extends Component {
                         {criticalItems.length}
                       </span>
                     )}
-                  </li>
-                  <li
-                    onClick={() => this.setState({ mainContent: 'inventory-analytics' })}
-                    style={{ 
-                      cursor: 'pointer', 
-                      padding: '8px 12px', 
-                      fontSize: 14, 
-                      borderRadius: '4px', 
-                      marginBottom: '4px',
-                      color: this.state.mainContent === 'inventory-analytics' ? '#0f766e' : '#134e4a',
-                      background: this.state.mainContent === 'inventory-analytics' 
-                        ? 'linear-gradient(135deg, #0d9488, #14b8a6)' 
-                        : 'transparent',
-                      transition: 'all 0.3s ease'
-                    }}
-                    onMouseEnter={(e) => {
-                      if (this.state.mainContent !== 'inventory-analytics') {
-                        e.target.style.background = 'rgba(13, 148, 136, 0.15)';
-                      }
-                    }}
-                    onMouseLeave={(e) => {
-                      if (this.state.mainContent !== 'inventory-analytics') {
-                        e.target.style.background = 'transparent';
-                      }
-                    }}
-                  >
-                    📊 Inventory Analytics
-                  </li>
-                  <li
-                    onClick={() => this.setState({ mainContent: 'stock-reports' })}
-                    style={{ 
-                      cursor: 'pointer', 
-                      padding: '8px 12px', 
-                      fontSize: 14, 
-                      borderRadius: '4px', 
-                      marginBottom: '4px',
-                      color: this.state.mainContent === 'stock-reports' ? '#0f766e' : '#134e4a',
-                      background: this.state.mainContent === 'stock-reports' 
-                        ? 'linear-gradient(135deg, #0d9488, #14b8a6)' 
-                        : 'transparent',
-                      transition: 'all 0.3s ease'
-                    }}
-                    onMouseEnter={(e) => {
-                      if (this.state.mainContent !== 'stock-reports') {
-                        e.target.style.background = 'rgba(13, 148, 136, 0.15)';
-                      }
-                    }}
-                    onMouseLeave={(e) => {
-                      if (this.state.mainContent !== 'stock-reports') {
-                        e.target.style.background = 'transparent';
-                      }
-                    }}
-                  >
-                    📋 Stock Reports
                   </li>
                 </ul>
               )}
@@ -1856,31 +2828,58 @@ export default class UserDashboard extends Component {
                     📈 Demand Forecasting
                   </li>
                   <li
-                    onClick={() => this.setState({ mainContent: 'inventory-analytics' })}
+                    onClick={() => this.setState({ mainContent: 'seasonal-predictions' })}
                     style={{ 
                       cursor: 'pointer', 
                       padding: '8px 12px', 
                       fontSize: 14, 
                       borderRadius: '4px', 
                       marginBottom: '4px',
-                      color: this.state.mainContent === 'inventory-analytics' ? '#0f766e' : '#134e4a',
-                      background: this.state.mainContent === 'inventory-analytics' 
+                      color: this.state.mainContent === 'seasonal-predictions' ? '#0f766e' : '#134e4a',
+                      background: this.state.mainContent === 'seasonal-predictions' 
                         ? 'linear-gradient(135deg, #0d9488, #14b8a6)' 
                         : 'transparent',
                       transition: 'all 0.3s ease'
                     }}
                     onMouseEnter={(e) => {
-                      if (this.state.mainContent !== 'inventory-analytics') {
+                      if (this.state.mainContent !== 'seasonal-predictions') {
                         e.target.style.background = 'rgba(13, 148, 136, 0.15)';
                       }
                     }}
                     onMouseLeave={(e) => {
-                      if (this.state.mainContent !== 'inventory-analytics') {
+                      if (this.state.mainContent !== 'seasonal-predictions') {
                         e.target.style.background = 'transparent';
                       }
                     }}
                   >
-                    📊 Inventory Analytics
+                    🍂 Seasonal Predictions
+                  </li>
+                  <li
+                    onClick={() => this.setState({ mainContent: 'smart-restocking' })}
+                    style={{ 
+                      cursor: 'pointer', 
+                      padding: '8px 12px', 
+                      fontSize: 14, 
+                      borderRadius: '4px', 
+                      marginBottom: '4px',
+                      color: this.state.mainContent === 'smart-restocking' ? '#0f766e' : '#134e4a',
+                      background: this.state.mainContent === 'smart-restocking' 
+                        ? 'linear-gradient(135deg, #0d9488, #14b8a6)' 
+                        : 'transparent',
+                      transition: 'all 0.3s ease'
+                    }}
+                    onMouseEnter={(e) => {
+                      if (this.state.mainContent !== 'smart-restocking') {
+                        e.target.style.background = 'rgba(13, 148, 136, 0.15)';
+                      }
+                    }}
+                    onMouseLeave={(e) => {
+                      if (this.state.mainContent !== 'smart-restocking') {
+                        e.target.style.background = 'transparent';
+                      }
+                    }}
+                  >
+                    📦 Smart Restocking
                   </li>
                 </ul>
               )}
@@ -1972,12 +2971,12 @@ export default class UserDashboard extends Component {
                   userSelect: 'none',
                   display: 'flex',
                   alignItems: 'center',
-                  padding: '14px 18px',
+                  padding: '11px 14px',
                   borderRadius: '12px',
                   background: openDropdown === 'requests' ? 
                     'linear-gradient(135deg, #0d9488, #14b8a6)' : 'rgba(255,255,255,0.7)',
                   color: openDropdown === 'requests' ? '#ffffff' : '#134e4a',
-                  marginBottom: '10px',
+                  marginBottom: '8px',
                   transition: 'all 0.3s ease',
                   border: '1px solid rgba(13, 148, 136, 0.25)',
                   boxShadow: openDropdown === 'requests' ? '0 4px 12px rgba(13, 148, 136, 0.35)' : 'none',
@@ -2121,52 +3120,15 @@ export default class UserDashboard extends Component {
                 </ul>
               )}
 
-              {/* Comprehensive Analytics Dashboard */}
-              <li
-                onClick={() => {
-                  this.setState({ mainContent: 'comprehensive-analytics' });
-                  this.generateComprehensiveAnalytics();
-                }}
-                style={{
-                  cursor: 'pointer',
-                  userSelect: 'none',
-                  display: 'flex',
-                  alignItems: 'center',
-                  padding: '14px 18px',
-                  borderRadius: '12px',
-                  background: this.state.mainContent === 'comprehensive-analytics' ? 
-                    'linear-gradient(135deg, #0d9488, #14b8a6)' : 'rgba(255,255,255,0.7)',
-                  color: this.state.mainContent === 'comprehensive-analytics' ? '#ffffff' : '#134e4a',
-                  marginBottom: '10px',
-                  transition: 'all 0.3s ease',
-                  border: '1px solid rgba(13, 148, 136, 0.25)',
-                  boxShadow: this.state.mainContent === 'comprehensive-analytics' ? '0 4px 12px rgba(13, 148, 136, 0.35)' : 'none',
-                  fontWeight: '500'
-                }}
-                onMouseEnter={(e) => {
-                  if (this.state.mainContent !== 'comprehensive-analytics') {
-                    e.target.style.background = 'rgba(13, 148, 136, 0.15)';
-                    e.target.style.transform = 'translateX(4px)';
-                  }
-                }}
-                onMouseLeave={(e) => {
-                  if (this.state.mainContent !== 'comprehensive-analytics') {
-                    e.target.style.background = 'rgba(255,255,255,0.7)';
-                    e.target.style.transform = 'translateX(0px)';
-                  }
-                }}
-              >
-                📊 Comprehensive Analytics
-              </li>
             </ul>
           </nav>
 
           <div className="dashboard-content" style={{ 
             flex: 1, 
-            padding: '32px', 
-            marginLeft: '280px',
+            padding: '24px',
+            marginLeft: '264px',
             background: 'transparent',
-            minHeight: 'calc(100vh - 142px)',
+            minHeight: `calc(100vh - ${LAYOUT_TOP_OFFSET}px)`,
             marginTop: '0px'
           }}>
             {/* Critical Items Alert */}
@@ -2189,9 +3151,498 @@ export default class UserDashboard extends Component {
               </div>
             )}
 
+            {/* Dashboard Page */}
+            {mainContent === 'dashboard' && (
+              <div style={{
+                width: '100%',
+                maxWidth: 1360,
+                margin: '20px auto',
+                background: '#fff',
+                borderRadius: 16,
+                boxShadow: '0 4px 12px rgba(0,0,0,0.1)',
+                padding: 24
+              }}>
+                <h2 style={{ fontWeight: 800, color: '#334155', fontSize: 28, marginBottom: 8 }}>
+                  Overview
+                </h2>
+                <p style={{ color: '#475569', marginTop: 0, marginBottom: 20, fontSize: 15 }}>
+                  Quick summary of your current inventory and sales status.
+                </p>
+
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 20, flexWrap: 'wrap' }}>
+                  <span style={{ fontSize: 14, fontWeight: 700, color: '#334155' }}>Sales Period:</span>
+                  {[
+                    { key: 'today', label: 'Today' },
+                    { key: 'week', label: 'This Week' },
+                    { key: 'month', label: 'This Month' }
+                  ].map((period) => (
+                    <button
+                      key={period.key}
+                      onClick={() => this.setState({ dashboardSalesPeriod: period.key })}
+                      style={{
+                        border: '1px solid #cbd5e1',
+                        borderRadius: 999,
+                        padding: '8px 14px',
+                        cursor: 'pointer',
+                        background: this.state.dashboardSalesPeriod === period.key ? '#0ea5e9' : '#fff',
+                        color: this.state.dashboardSalesPeriod === period.key ? '#fff' : '#334155',
+                        fontSize: 13,
+                        fontWeight: 700
+                      }}
+                    >
+                      {period.label}
+                    </button>
+                  ))}
+                  {searchQuery && (
+                    <span style={{
+                      fontSize: 12,
+                      fontWeight: 700,
+                      color: '#0f766e',
+                      background: '#ccfbf1',
+                      border: '1px solid #99f6e4',
+                      borderRadius: 999,
+                      padding: '5px 10px'
+                    }}>
+                      Filter active: "{this.state.topSearchQuery}"
+                    </span>
+                  )}
+                </div>
+
+                <div className="dashboard-kpi-grid" style={{ marginBottom: 24 }}>
+                  <div
+                    className="dashboard-kpi-primary"
+                    style={{
+                      ...baseCardStyle,
+                      background: 'linear-gradient(135deg, #1d4ed8, #2563eb)',
+                      border: '1px solid #1e40af',
+                      color: '#ffffff',
+                      boxShadow: '0 10px 24px rgba(37, 99, 235, 0.25)'
+                    }}
+                  >
+                    <div style={{ fontSize: 13, color: 'rgba(219, 234, 254, 0.95)', fontWeight: 700, letterSpacing: '0.02em' }}>
+                      PRIMARY KPI
+                    </div>
+                    <div style={{ fontSize: 14, color: '#e2e8f0', marginTop: 6, fontWeight: 700 }}>
+                      Total Sales ({selectedSalesLabel})
+                    </div>
+                    <div style={{ fontSize: 40, fontWeight: 800, color: '#ffffff', marginTop: 8 }}>
+                      ₱{selectedSalesValue.toFixed(2)}
+                    </div>
+                  </div>
+                  <div className="dashboard-kpi-card" style={{ ...baseCardStyle, background: '#f8fafc', border: '1px solid #cbd5e1' }}>
+                    <div style={{ fontSize: 13, color: '#334155', fontWeight: 700 }}>Total Products</div>
+                    <div style={{ fontSize: 32, fontWeight: 800, color: '#0f172a', marginTop: 8 }}>{totalProducts}</div>
+                  </div>
+                  <div className="dashboard-kpi-card" style={{ ...baseCardStyle, background: '#f8fafc', border: '1px solid #cbd5e1' }}>
+                    <div style={{ fontSize: 13, color: '#334155', fontWeight: 700 }}>Total Stock Quantity</div>
+                    <div style={{ fontSize: 32, fontWeight: 800, color: '#0f172a', marginTop: 8 }}>{totalStockQuantity}</div>
+                  </div>
+                  <div className="dashboard-kpi-card" style={{ ...baseCardStyle, background: '#fff7ed', border: '1px solid #fed7aa' }}>
+                    <div style={{ fontSize: 13, color: '#9a3412', fontWeight: 700 }}>Low Stock Items</div>
+                    <div style={{ fontSize: 32, fontWeight: 800, color: '#7c2d12', marginTop: 8 }}>{lowStockItemsCount}</div>
+                  </div>
+                  <div className="dashboard-kpi-card" style={{ ...baseCardStyle, background: '#fef2f2', border: '1px solid #fecaca' }}>
+                    <div style={{ fontSize: 13, color: '#991b1b', fontWeight: 700 }}>Out of Stock Items</div>
+                    <div style={{ fontSize: 32, fontWeight: 800, color: '#7f1d1d', marginTop: 8 }}>{outOfStockItemsCount}</div>
+                  </div>
+                </div>
+
+                <div style={{
+                  border: '1px solid #e2e8f0',
+                  borderRadius: 14,
+                  padding: 18,
+                  marginBottom: 24,
+                  background: '#ffffff'
+                }}>
+                  <div style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    flexWrap: 'wrap',
+                    gap: 10,
+                    marginBottom: 14
+                  }}>
+                    <h3 style={{ margin: 0, fontSize: 20, color: '#1e293b' }}>🚨 Low Stock & Critical Alerts</h3>
+                    <button
+                      onClick={() => {
+                        this.fetchInventoryItems();
+                        this.fetchCriticalItems();
+                      }}
+                      style={{
+                        border: '1px solid #cbd5e1',
+                        background: '#f8fafc',
+                        borderRadius: 10,
+                        padding: '8px 12px',
+                        fontWeight: 700,
+                        cursor: 'pointer',
+                        color: '#334155'
+                      }}
+                    >
+                      Refresh
+                    </button>
+                  </div>
+
+                  <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 12, fontSize: 13, fontWeight: 700 }}>
+                    <span style={{ color: '#166534' }}>● Green: Normal</span>
+                    <span style={{ color: '#c2410c' }}>● Orange: Low Stock</span>
+                    <span style={{ color: '#b91c1c' }}>● Red: Critical</span>
+                  </div>
+
+                  {visibleAffectedStockItems.length === 0 ? (
+                    <div style={{
+                      background: '#ecfdf5',
+                      border: '1px solid #a7f3d0',
+                      borderRadius: 10,
+                      padding: 12,
+                      color: '#166534',
+                      fontWeight: 700
+                    }}>
+                      All products are currently in normal status.
+                    </div>
+                  ) : (
+                    <div style={{ display: 'grid', gap: 10 }}>
+                      {visibleAffectedStockItems.map((item) => (
+                        <div
+                          key={item.id}
+                          style={{
+                            border: `1px solid ${item.stockStatus.color}`,
+                            borderRadius: 10,
+                            padding: 12,
+                            display: 'grid',
+                            gridTemplateColumns: '1.3fr auto auto',
+                            gap: 10,
+                            alignItems: 'center'
+                          }}
+                        >
+                          <div>
+                            <div style={{ fontWeight: 700, color: '#0f172a' }}>{item.name}</div>
+                            <div style={{ fontSize: 13, color: '#475569' }}>Current Stock: {item.quantity}</div>
+                          </div>
+                          <span style={{
+                            background: item.stockStatus.bg,
+                            color: item.stockStatus.color,
+                            borderRadius: 999,
+                            padding: '4px 10px',
+                            fontSize: 12,
+                            fontWeight: 700
+                          }}>
+                            {item.stockStatus.label}
+                          </span>
+                          <div style={{ display: 'flex', gap: 8 }}>
+                            <button
+                              onClick={() => {
+                                this.setState({
+                                  mainContent: 'update-items',
+                                  selectedUpdateItem: item,
+                                  updateItemName: item.name,
+                                  updateItemQuantity: String(item.quantity),
+                                  updateItemPrice: String(item.price || 0),
+                                  updateItemCategory: item.category || ''
+                                });
+                              }}
+                              style={{
+                                border: 'none',
+                                background: '#10b981',
+                                color: '#fff',
+                                borderRadius: 8,
+                                padding: '8px 10px',
+                                fontWeight: 700,
+                                cursor: 'pointer',
+                                fontSize: 12
+                              }}
+                            >
+                              + Restock
+                            </button>
+                            <button
+                              onClick={() => {
+                                this.setState({
+                                  mainContent: 'update-items',
+                                  selectedUpdateItem: item,
+                                  updateItemName: item.name,
+                                  updateItemQuantity: String(item.quantity),
+                                  updateItemPrice: String(item.price || 0),
+                                  updateItemCategory: item.category || ''
+                                });
+                              }}
+                              style={{
+                                border: 'none',
+                                background: '#334155',
+                                color: '#fff',
+                                borderRadius: 8,
+                                padding: '8px 10px',
+                                fontWeight: 700,
+                                cursor: 'pointer',
+                                fontSize: 12
+                              }}
+                            >
+                              Adjust
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <div style={{
+                  border: '1px solid #e2e8f0',
+                  borderRadius: 14,
+                  padding: 18,
+                  marginBottom: 24,
+                  background: '#ffffff'
+                }}>
+                  <div style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    flexWrap: 'wrap',
+                    gap: 10,
+                    marginBottom: 12
+                  }}>
+                    <h3 style={{ margin: 0, fontSize: 20, color: '#1e293b' }}>📡 Real-Time Transactions Feed</h3>
+                    <span style={{
+                      fontSize: 12,
+                      fontWeight: 700,
+                      color: '#0f766e',
+                      background: '#ccfbf1',
+                      border: '1px solid #99f6e4',
+                      borderRadius: 999,
+                      padding: '4px 10px'
+                    }}>
+                      LIVE ACTIVITY
+                    </span>
+                  </div>
+
+                  {topFastMovingProducts.length > 0 && (
+                    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12 }}>
+                      {topFastMovingProducts.map((item) => (
+                        <span
+                          key={`fast-${item.name}`}
+                          style={{
+                            fontSize: 12,
+                            fontWeight: 700,
+                            color: '#1d4ed8',
+                            background: '#dbeafe',
+                            border: '1px solid #bfdbfe',
+                            borderRadius: 999,
+                            padding: '5px 10px'
+                          }}
+                        >
+                          🔥 {item.name} ({item.quantity} sold)
+                        </span>
+                      ))}
+                    </div>
+                  )}
+
+                  <div style={{
+                    maxHeight: 280,
+                    overflowY: 'auto',
+                    border: '1px solid #e2e8f0',
+                    borderRadius: 10,
+                    background: '#f8fafc'
+                  }}>
+                    {visibleTransactionEvents.length === 0 ? (
+                      <div style={{ padding: 14, color: '#475569', fontSize: 14 }}>
+                        No recent transactions yet.
+                      </div>
+                    ) : (
+                      visibleTransactionEvents.map((event) => {
+                        const isSale = event.transactionType === 'Sale';
+                        return (
+                          <div
+                            key={event.id}
+                            style={{
+                              display: 'grid',
+                              gridTemplateColumns: 'auto 1fr auto',
+                              gap: 12,
+                              alignItems: 'center',
+                              padding: '10px 12px',
+                              borderBottom: '1px solid #e2e8f0'
+                            }}
+                          >
+                            <span style={{
+                              fontSize: 12,
+                              fontWeight: 700,
+                              borderRadius: 999,
+                              padding: '4px 10px',
+                              color: isSale ? '#9a3412' : '#166534',
+                              background: isSale ? '#ffedd5' : '#dcfce7'
+                            }}>
+                              {event.transactionType}
+                            </span>
+                            <div style={{ minWidth: 0 }}>
+                              <div style={{ fontSize: 14, fontWeight: 700, color: '#0f172a' }}>{event.productName}</div>
+                              <div style={{ fontSize: 12, color: '#475569' }}>
+                                {event.quantity} {isSale ? 'sold' : 'restocked'}
+                              </div>
+                            </div>
+                            <div style={{ fontSize: 12, color: '#475569', whiteSpace: 'nowrap' }}>
+                              {this.getRelativeTimeLabel(event.timestamp)}
+                            </div>
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
+                </div>
+
+                <div style={{
+                  marginTop: 8,
+                  borderTop: '1px solid #e2e8f0',
+                  paddingTop: 22
+                }}>
+                  <h3 style={{ margin: '0 0 6px 0', fontSize: 22, color: '#1e293b' }}>Charts & Analytics</h3>
+                  <p style={{ margin: '0 0 18px 0', color: '#475569', fontSize: 14 }}>
+                    Visual trends and performance tracking for faster decisions.
+                  </p>
+
+                  <div
+                    className="dashboard-analytics-grid"
+                    style={{
+                      display: 'grid',
+                      gridTemplateColumns: 'repeat(auto-fit, minmax(380px, 1fr))',
+                      gap: 18,
+                      alignItems: 'stretch'
+                    }}
+                  >
+                    <div style={{ border: '1px solid #e2e8f0', borderRadius: 14, padding: 14, background: '#fff' }}>
+                      <h4 style={{ margin: '0 0 10px 0', fontSize: 16, color: '#334155' }}>Bar Chart - Top Selling Products</h4>
+                      <div style={{ width: '100%', height: 280 }}>
+                        <ResponsiveContainer>
+                          <BarChart data={visibleTopSellingProductsData}>
+                            <CartesianGrid strokeDasharray="3 3" stroke="#cbd5e1" />
+                            <XAxis dataKey="name" tick={{ fontSize: 12, fill: '#334155', fontWeight: 600 }} />
+                            <YAxis tick={{ fontSize: 12, fill: '#334155' }} />
+                            <Tooltip contentStyle={{ borderRadius: 10, border: '1px solid #cbd5e1' }} />
+                            <Legend wrapperStyle={{ fontSize: 12, color: '#1e293b', paddingTop: 8 }} />
+                            <Bar dataKey="quantity" fill="#0ea5e9" name="Units Sold" radius={[6, 6, 0, 0]} />
+                          </BarChart>
+                        </ResponsiveContainer>
+                      </div>
+                    </div>
+
+                    <div style={{ border: '1px solid #e2e8f0', borderRadius: 14, padding: 14, background: '#fff' }}>
+                      <h4 style={{ margin: '0 0 10px 0', fontSize: 16, color: '#334155' }}>Pie Chart - Product Categories Distribution</h4>
+                      <div
+                        style={{
+                          display: 'grid',
+                          gridTemplateColumns: 'minmax(220px, 1fr) minmax(180px, 220px)',
+                          gap: 12,
+                          alignItems: 'stretch'
+                        }}
+                      >
+                        <div style={{ width: '100%', height: 280, minWidth: 0 }}>
+                          <ResponsiveContainer>
+                            <PieChart>
+                              <Pie data={visibleCategoryDistributionData} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={90} label>
+                                {visibleCategoryDistributionData.map((entry, index) => (
+                                  <Cell key={`cell-${entry.name}`} fill={pieColors[index % pieColors.length]} />
+                                ))}
+                              </Pie>
+                              <Tooltip contentStyle={{ borderRadius: 10, border: '1px solid #cbd5e1' }} />
+                              <Legend wrapperStyle={{ fontSize: 12, color: '#1e293b', paddingTop: 8 }} />
+                            </PieChart>
+                          </ResponsiveContainer>
+                        </div>
+                        <div style={{
+                          borderLeft: '1px solid #e2e8f0',
+                          paddingLeft: 12,
+                          display: 'flex',
+                          flexDirection: 'column',
+                          minWidth: 0
+                        }}>
+                          <div style={{ fontSize: 13, fontWeight: 800, color: '#0f172a', marginBottom: 8 }}>
+                            Category Summary
+                          </div>
+                          {categoryTotalCount === 0 ? (
+                            <div style={{ fontSize: 13, color: '#475569' }}>
+                              No category data to summarize.
+                            </div>
+                          ) : (
+                            <div style={{ display: 'grid', gap: 8, overflow: 'auto' }}>
+                              {topCategoriesForSummary.map((item, index) => {
+                                const value = Number(item.value) || 0;
+                                const pct = categoryTotalCount ? Math.round((value / categoryTotalCount) * 100) : 0;
+                                return (
+                                  <div
+                                    key={`cat-summary-${item.name}`}
+                                    style={{
+                                      display: 'grid',
+                                      gridTemplateColumns: '10px 1fr auto',
+                                      gap: 8,
+                                      alignItems: 'center'
+                                    }}
+                                  >
+                                    <span style={{
+                                      width: 10,
+                                      height: 10,
+                                      borderRadius: 3,
+                                      background: pieColors[index % pieColors.length],
+                                      border: '1px solid rgba(15, 23, 42, 0.12)'
+                                    }} />
+                                    <div style={{ minWidth: 0 }}>
+                                      <div style={{
+                                        fontSize: 13,
+                                        fontWeight: 700,
+                                        color: '#0f172a',
+                                        overflow: 'hidden',
+                                        textOverflow: 'ellipsis',
+                                        whiteSpace: 'nowrap'
+                                      }}>
+                                        {item.name}
+                                      </div>
+                                      <div style={{ fontSize: 12, color: '#475569' }}>
+                                        {value} item{value === 1 ? '' : 's'}
+                                      </div>
+                                    </div>
+                                    <div style={{ fontSize: 12, fontWeight: 800, color: '#0f766e' }}>
+                                      {pct}%
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                              {uncategorizedForSummary && (Number(uncategorizedForSummary.value) || 0) > 0 && (
+                                <div style={{
+                                  marginTop: 8,
+                                  paddingTop: 10,
+                                  borderTop: '1px solid #e2e8f0',
+                                  fontSize: 12,
+                                  color: '#92400e',
+                                  fontWeight: 700
+                                }}>
+                                  Note: Uncategorized items detected ({Number(uncategorizedForSummary.value) || 0})
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div style={{ border: '1px solid #e2e8f0', borderRadius: 14, padding: 14, background: '#fff' }}>
+                      <h4 style={{ margin: '0 0 10px 0', fontSize: 16, color: '#334155' }}>Line Chart - Sales Movement Over Time</h4>
+                      <div style={{ width: '100%', height: 300 }}>
+                        <ResponsiveContainer>
+                          <LineChart data={salesTrendData}>
+                            <CartesianGrid strokeDasharray="3 3" stroke="#cbd5e1" />
+                            <XAxis dataKey="date" tick={{ fontSize: 12, fill: '#334155', fontWeight: 600 }} />
+                            <YAxis tick={{ fontSize: 12, fill: '#334155' }} />
+                            <Tooltip contentStyle={{ borderRadius: 10, border: '1px solid #cbd5e1' }} />
+                            <Legend wrapperStyle={{ fontSize: 12, color: '#1e293b', paddingTop: 8 }} />
+                            <Line type="monotone" dataKey="revenue" stroke="#10b981" strokeWidth={3} name="Revenue" dot={{ r: 4 }} />
+                            <Line type="monotone" dataKey="quantity" stroke="#f59e0b" strokeWidth={3} name="Units Sold" dot={{ r: 4 }} />
+                          </LineChart>
+                        </ResponsiveContainer>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
             {/* Record Sale Page */}
             {mainContent === 'record-sale' && (
-              <div style={{
+              <div className="add-items-panel" style={{
                 width: '100%',
                 maxWidth: 800,
                 margin: '32px auto',
@@ -2216,10 +3667,16 @@ export default class UserDashboard extends Component {
                     }}
                     style={{
                       width: '100%',
-                      padding: '12px',
-                      border: '2px solid #ddd',
-                      borderRadius: '6px',
+                      height: '52px',
+                      padding: '0 16px',
+                      border: '1.5px solid #cbd5e1',
+                      borderRadius: '12px',
                       fontSize: '16px',
+                      lineHeight: '52px',
+                      boxSizing: 'border-box',
+                      background: '#ffffff',
+                      color: '#0f172a',
+                      outline: 'none',
                       marginBottom: '16px'
                     }}
                   >
@@ -2245,10 +3702,15 @@ export default class UserDashboard extends Component {
                     placeholder="Enter quantity..."
                     style={{
                       width: '100%',
-                      padding: '12px',
-                      border: '2px solid #ddd',
-                      borderRadius: '6px',
-                      fontSize: '16px'
+                      height: '52px',
+                      padding: '0 16px',
+                      border: '1.5px solid #cbd5e1',
+                      borderRadius: '12px',
+                      fontSize: '16px',
+                      boxSizing: 'border-box',
+                      background: '#ffffff',
+                      color: '#0f172a',
+                      outline: 'none'
                     }}
                   />
                 </div>
@@ -2579,15 +4041,10 @@ export default class UserDashboard extends Component {
               </div>
             )}
 
-            {/* Data Predictions Page */}
-            {mainContent === 'data-predictions' && (
-              <div style={{ width: '100%', marginTop: '0' }}>
-                <DataPredictions />
-              </div>
-            )}
-
-            {/* Demand Forecasting Page */}
-            {mainContent === 'demand-forecasting' && (
+            {mainContent === 'data-predictions' && (() => {
+              const dp = this.buildDataPredictions();
+              const trendColor = dp.summary.revTrendPct >= 0 ? '#059669' : '#dc2626';
+              return (
               <div style={{
                 width: '100%',
                 maxWidth: 1200,
@@ -2595,90 +4052,261 @@ export default class UserDashboard extends Component {
                 background: '#fff',
                 borderRadius: 12,
                 boxShadow: '0 4px 12px rgba(0,0,0,0.1)',
-                padding: 24
+                padding: 24,
+                fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif"
               }}>
-                <h2 style={{ fontWeight: 700, color: '#333', fontSize: 20, textAlign: 'center', marginBottom: 24 }}>
-                  📈 Demand Forecasting
-                </h2>
-                
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 16, flexWrap: 'wrap', marginBottom: 20 }}>
+                  <div style={{ flex: '1 1 280px' }}>
+                    <h2 style={{ fontWeight: 800, color: '#0f172a', fontSize: 24, margin: '0 0 8px 0', textAlign: 'left' }}>
+                      🔮 Data Predictions
+                    </h2>
+                    <p style={{ margin: 0, color: '#64748b', fontSize: 14, lineHeight: 1.55, maxWidth: 720 }}>
+                      Uses your historical transactions and current stock levels to highlight fast movers, slow inventory, rising demand,
+                      and likely stock coverage issues — plus a simple next-week outlook to support planning without relying on manual guesses.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      this.fetchSalesData();
+                      this.fetchInventoryItems();
+                      this.showToast('Refreshing sales and inventory…', 'success');
+                    }}
+                    style={{
+                      background: 'linear-gradient(135deg, #0d9488, #14b8a6)',
+                      color: '#fff',
+                      border: 'none',
+                      borderRadius: 10,
+                      padding: '10px 18px',
+                      cursor: 'pointer',
+                      fontWeight: 700,
+                      fontSize: 14,
+                      boxShadow: '0 4px 12px rgba(13, 148, 136, 0.35)'
+                    }}
+                  >
+                    ↻ Refresh data
+                  </button>
+                </div>
+
                 <div style={{
                   display: 'grid',
-                  gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))',
-                  gap: 20,
-                  marginBottom: 32
+                  gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+                  gap: 16,
+                  marginBottom: 20
                 }}>
-                  <div style={{
-                    background: 'linear-gradient(135deg, #4caf50, #45a049)',
-                    color: 'white',
-                    padding: 24,
-                    borderRadius: 16,
-                    textAlign: 'center'
-                  }}>
-                    <h3 style={{ margin: '0 0 8px 0', fontSize: 24 }}>📈 Trending Up</h3>
-                    <p style={{ margin: 0, opacity: 0.9 }}>Croissants showing 25% increase</p>
+                  <div style={{ background: 'linear-gradient(135deg, #0ea5e9, #0369a1)', color: '#fff', padding: 20, borderRadius: 14 }}>
+                    <div style={{ fontSize: 13, opacity: 0.9 }}>At-risk movers (coverage)</div>
+                    <div style={{ fontSize: 32, fontWeight: 800, marginTop: 6 }}>{dp.atRiskCount}</div>
+                    <div style={{ fontSize: 12, opacity: 0.9, marginTop: 6 }}>High turnover vs low days-of-cover</div>
                   </div>
-                  <div style={{
-                    background: 'linear-gradient(135deg, #ff9800, #f57c00)',
-                    color: 'white',
-                    padding: 24,
-                    borderRadius: 16,
-                    textAlign: 'center'
-                  }}>
-                    <h3 style={{ margin: '0 0 8px 0', fontSize: 24 }}>⚠️ Needs Attention</h3>
-                    <p style={{ margin: 0, opacity: 0.9 }}>White Bread demand declining</p>
+                  <div style={{ background: 'linear-gradient(135deg, #10b981, #047857)', color: '#fff', padding: 20, borderRadius: 14 }}>
+                    <div style={{ fontSize: 13, opacity: 0.9 }}>Last 7 days revenue</div>
+                    <div style={{ fontSize: 28, fontWeight: 800, marginTop: 6 }}>₱{dp.summary.last7Revenue.toLocaleString()}</div>
+                    <div style={{ fontSize: 12, opacity: 0.9, marginTop: 6 }}>
+                      Prev 7d: ₱{dp.summary.prev7Revenue.toLocaleString()}
+                      <span style={{ marginLeft: 8, color: 'rgba(255,255,255,0.95)' }}>
+                        (<span style={{ color: '#fff', fontWeight: 700 }}>{dp.summary.revTrendPct >= 0 ? '+' : ''}{dp.summary.revTrendPct}%</span>)
+                      </span>
+                    </div>
                   </div>
-                  <div style={{
-                    background: 'linear-gradient(135deg, #2196f3, #1976d2)',
-                    color: 'white',
-                    padding: 24,
-                    borderRadius: 16,
-                    textAlign: 'center'
-                  }}>
-                    <h3 style={{ margin: '0 0 8px 0', fontSize: 24 }}>🎯 Forecast Accuracy</h3>
-                    <p style={{ margin: 0, opacity: 0.9 }}>87.3% prediction accuracy</p>
+                  <div style={{ background: 'linear-gradient(135deg, #8b5cf6, #6d28d9)', color: '#fff', padding: 20, borderRadius: 14 }}>
+                    <div style={{ fontSize: 13, opacity: 0.9 }}>Next 7 days (estimate)</div>
+                    <div style={{ fontSize: 28, fontWeight: 800, marginTop: 6 }}>₱{dp.summary.projectedNext7Revenue.toLocaleString()}</div>
+                    <div style={{ fontSize: 12, opacity: 0.9, marginTop: 6 }}>~{dp.summary.projectedNext7Units} units (trend-adjusted)</div>
+                  </div>
+                  <div style={{ background: 'linear-gradient(135deg, #f59e0b, #d97706)', color: '#fff', padding: 20, borderRadius: 14 }}>
+                    <div style={{ fontSize: 13, opacity: 0.9 }}>Sales records used</div>
+                    <div style={{ fontSize: 32, fontWeight: 800, marginTop: 6 }}>{dp.validSalesCount}</div>
+                    <div style={{ fontSize: 12, opacity: 0.9, marginTop: 6 }}>Rows with a valid sale date</div>
                   </div>
                 </div>
 
                 <div style={{
-                  background: '#f8f9fa',
-                  padding: 20,
+                  background: '#f8fafc',
+                  border: '1px solid #e2e8f0',
                   borderRadius: 12,
-                  textAlign: 'center'
+                  padding: 16,
+                  marginBottom: 20
                 }}>
-                  <h3>🔮 AI-Powered Forecasting Engine</h3>
-                  <p>Our machine learning algorithms analyze historical sales data, seasonal trends, and external factors to predict future demand patterns.</p>
-                  <div style={{ marginTop: 20 }}>
-                    <button
-                      onClick={() => this.setState({ mainContent: 'data-predictions' })}
-                      style={{
-                        background: '#007bff',
-                        color: 'white',
-                        border: 'none',
-                        padding: '12px 24px',
-                        borderRadius: '6px',
-                        cursor: 'pointer',
-                        marginRight: '10px'
-                      }}
-                    >
-                      View Detailed Predictions
-                    </button>
-                    <button
-                      onClick={() => this.setState({ mainContent: 'inventory-analytics' })}
-                      style={{
-                        background: '#28a745',
-                        color: 'white',
-                        border: 'none',
-                        padding: '12px 24px',
-                        borderRadius: '6px',
-                        cursor: 'pointer'
-                      }}
-                    >
-                      View Analytics Dashboard
-                    </button>
+                  <h3 style={{ margin: '0 0 10px 0', fontSize: 16, color: '#0f172a' }}>Predictive insights</h3>
+                  <ul style={{ margin: 0, paddingLeft: 20, color: '#334155', fontSize: 14, lineHeight: 1.6 }}>
+                    {dp.insightBullets.map((line, idx) => (
+                      <li key={idx} style={{ marginBottom: 6 }}>{line}</li>
+                    ))}
+                  </ul>
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 20, marginBottom: 20 }}>
+                  <div style={{
+                    border: '1px solid #e5e7eb',
+                    borderRadius: 12,
+                    padding: 16,
+                    minHeight: 280
+                  }}>
+                    <h3 style={{ margin: '0 0 12px 0', fontSize: 15, color: '#0f172a' }}>Revenue movement (≈28d)</h3>
+                    <div style={{ width: '100%', height: 220 }}>
+                      <ResponsiveContainer>
+                        <LineChart data={dp.dailyTrend} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+                          <CartesianGrid strokeDasharray="3 3" stroke="#eef2ff" />
+                          <XAxis dataKey="date" tick={{ fontSize: 11 }} stroke="#94a3b8" />
+                          <YAxis tick={{ fontSize: 11 }} stroke="#94a3b8" />
+                          <Tooltip formatter={(v) => [`₱${Number(v).toLocaleString()}`, 'Revenue']} />
+                          <Line type="monotone" dataKey="revenue" stroke="#0d9488" strokeWidth={2} dot={false} name="Revenue" />
+                        </LineChart>
+                      </ResponsiveContainer>
+                    </div>
+                    <div style={{ fontSize: 12, color: trendColor, marginTop: 8, fontWeight: 600 }}>
+                      Week-over-week revenue trend: {dp.summary.revTrendPct >= 0 ? '+' : ''}{dp.summary.revTrendPct}%
+                    </div>
+                  </div>
+                  <div style={{
+                    border: '1px solid #e5e7eb',
+                    borderRadius: 12,
+                    padding: 16,
+                    minHeight: 280
+                  }}>
+                    <h3 style={{ margin: '0 0 12px 0', fontSize: 15, color: '#0f172a' }}>Units sold per day (≈28d)</h3>
+                    <div style={{ width: '100%', height: 220 }}>
+                      <ResponsiveContainer>
+                        <BarChart data={dp.dailyTrend} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+                          <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                          <XAxis dataKey="date" tick={{ fontSize: 11 }} stroke="#94a3b8" />
+                          <YAxis tick={{ fontSize: 11 }} stroke="#94a3b8" />
+                          <Tooltip />
+                          <Bar dataKey="units" fill="#6366f1" radius={[4, 4, 0, 0]} name="Units" />
+                        </BarChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </div>
+                </div>
+
+                <h3 style={{ fontSize: 16, color: '#0f172a', margin: '8px 0 12px 0' }}>Restock priority (from movement + stock)</h3>
+                <div style={{ overflowX: 'auto', border: '1px solid #e5e7eb', borderRadius: 12, marginBottom: 20 }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+                    <thead>
+                      <tr style={{ background: '#f1f5f9', textAlign: 'left' }}>
+                        <th style={{ padding: 12 }}>Product</th>
+                        <th style={{ padding: 12 }}>Risk</th>
+                        <th style={{ padding: 12 }}>Stock</th>
+                        <th style={{ padding: 12 }}>14d sold</th>
+                        <th style={{ padding: 12 }}>Days cover</th>
+                        <th style={{ padding: 12 }}>Suggest reorder</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {dp.restockPriority.length === 0 ? (
+                        <tr>
+                          <td colSpan={6} style={{ padding: 20, textAlign: 'center', color: '#64748b' }}>
+                            No restock recommendations right now. Low stock without recent sales still appears in inventory alerts elsewhere.
+                          </td>
+                        </tr>
+                      ) : (
+                        dp.restockPriority.map((r) => (
+                          <tr key={r.id || r.name} style={{ borderTop: '1px solid #f1f5f9' }}>
+                            <td style={{ padding: 12, fontWeight: 600, color: '#0f172a' }}>{r.name}</td>
+                            <td style={{ padding: 12 }}>
+                              <span style={{
+                                fontWeight: 700,
+                                fontSize: 12,
+                                padding: '4px 8px',
+                                borderRadius: 999,
+                                background: r.shortageRisk === 'critical' ? '#fee2e2' : r.shortageRisk === 'high' ? '#ffedd5' : '#fef9c3',
+                                color: r.shortageRisk === 'critical' ? '#991b1b' : r.shortageRisk === 'high' ? '#c2410c' : '#a16207'
+                              }}>
+                                {r.shortageRisk}
+                              </span>
+                            </td>
+                            <td style={{ padding: 12 }}>{r.stock}</td>
+                            <td style={{ padding: 12 }}>{r.recentQty}</td>
+                            <td style={{ padding: 12 }}>{r.daysCover != null ? Math.round(r.daysCover * 10) / 10 : '—'}</td>
+                            <td style={{ padding: 12, fontWeight: 700, color: '#0d9488' }}>+{r.suggestedReorder}</td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: 20 }}>
+                  <div style={{ border: '1px solid #e5e7eb', borderRadius: 12, padding: 16 }}>
+                    <h4 style={{ margin: '0 0 12px 0', color: '#0f172a' }}>Fast-selling (14d)</h4>
+                    <ul style={{ margin: 0, paddingLeft: 18, color: '#334155', fontSize: 14, lineHeight: 1.55 }}>
+                      {dp.fastSelling.length === 0 ? (
+                        <li style={{ listStyle: 'none', marginLeft: -18, color: '#64748b' }}>No movement in the last 14 days for matched products.</li>
+                      ) : (
+                        dp.fastSelling.map((r) => (
+                          <li key={`fast-${r.id || r.name}`}>
+                            <strong>{r.name}</strong> — {r.recentQty} sold (avg {r.recentAvgDaily.toFixed(2)}/day)
+                          </li>
+                        ))
+                      )}
+                    </ul>
+                  </div>
+                  <div style={{ border: '1px solid #e5e7eb', borderRadius: 12, padding: 16 }}>
+                    <h4 style={{ margin: '0 0 12px 0', color: '#0f172a' }}>Slow-moving (high stock, 14d = 0)</h4>
+                    <ul style={{ margin: 0, paddingLeft: 18, color: '#334155', fontSize: 14, lineHeight: 1.55 }}>
+                      {dp.slowMoving.length === 0 ? (
+                        <li style={{ listStyle: 'none', marginLeft: -18, color: '#64748b' }}>No obvious slow movers by this rule.</li>
+                      ) : (
+                        dp.slowMoving.map((r) => (
+                          <li key={`slow-${r.id || r.name}`}>
+                            <strong>{r.name}</strong> — stock {r.stock}, no sales in last 14d
+                          </li>
+                        ))
+                      )}
+                    </ul>
+                  </div>
+                  <div style={{ border: '1px solid #e5e7eb', borderRadius: 12, padding: 16 }}>
+                    <h4 style={{ margin: '0 0 12px 0', color: '#0f172a' }}>Rising demand (vs prior 14d)</h4>
+                    <ul style={{ margin: 0, paddingLeft: 18, color: '#334155', fontSize: 14, lineHeight: 1.55 }}>
+                      {dp.increasingDemand.length === 0 ? (
+                        <li style={{ listStyle: 'none', marginLeft: -18, color: '#64748b' }}>No strong demand uptrends detected yet.</li>
+                      ) : (
+                        dp.increasingDemand.map((r) => (
+                          <li key={`inc-${r.id || r.name}`}>
+                            <strong>{r.name}</strong> — <span style={{ color: '#059669', fontWeight: 700 }}>+{r.trendPct}%</span> run-rate, {r.recentQty} sold / 14d
+                          </li>
+                        ))
+                      )}
+                    </ul>
                   </div>
                 </div>
               </div>
+              );
+            })()}
+
+            {mainContent === 'demand-forecasting' && (
+              <DemandForecasting
+                salesData={this.state.salesData}
+                inventoryItems={this.state.inventoryItems}
+                defaultPeriod={30}
+                onRefresh={() => {
+                  this.fetchSalesData();
+                  this.fetchInventoryItems();
+                  this.showToast?.('Refreshing sales and inventory…', 'success');
+                }}
+              />
             )}
+
+            {mainContent === 'seasonal-predictions' && (
+              <SeasonalPredictions
+                salesData={this.state.salesData}
+                inventoryItems={this.state.inventoryItems}
+                onRefresh={() => {
+                  this.fetchSalesData();
+                  this.fetchInventoryItems();
+                  this.showToast?.('Refreshing sales and inventory…', 'success');
+                }}
+              />
+            )}
+
+            {mainContent === 'smart-restocking' && (
+              <div className="smart-restocking-container">
+                <SmartRestocking />
+              </div>
+            )}
+
+
 
             {/* Add Items Page */}
             {mainContent === 'add-items-table' && (
@@ -2687,241 +4315,337 @@ export default class UserDashboard extends Component {
                 maxWidth: 1200,
                 margin: '32px auto',
                 background: '#fff',
-                borderRadius: 12,
-                boxShadow: '0 4px 12px rgba(0,0,0,0.1)',
-                padding: 24
+                borderRadius: 16,
+                boxShadow: '0 12px 28px rgba(15, 23, 42, 0.12)',
+                border: '1px solid #e5e7eb',
+                overflow: 'hidden'
               }}
               onLoad={() => this.fetchCategories()}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
-                  <h2 style={{ fontWeight: 700, color: '#333', fontSize: 20, margin: 0 }}>
-                    ➕ Add New Items
-                  </h2>
-                  <button
-                    onClick={() => {
-                      console.log('🔄 Refreshing categories...');
-                      this.fetchCategories();
+                <div style={{
+                  position: 'sticky',
+                  top: 0,
+                  zIndex: 4,
+                  background: '#fff',
+                  borderBottom: '1px solid #e5e7eb',
+                  padding: '18px 20px',
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  gap: 12,
+                  flexWrap: 'wrap'
+                }}>
+                  <div>
+                    <h2 style={{ fontWeight: 800, color: '#0f172a', fontSize: 22, margin: 0 }}>
+                      ➕ Add Items
+                    </h2>
+                    <div style={{ marginTop: 6, color: '#64748b', fontSize: 13 }}>
+                      Fill in quantity and price to auto-compute totals while typing.
+                    </div>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                    <span style={{
+                      background: '#eef2ff',
+                      color: '#4338ca',
+                      border: '1px solid #c7d2fe',
+                      borderRadius: 999,
+                      padding: '6px 12px',
+                      fontSize: 12,
+                      fontWeight: 700
                     }}
-                    style={{
-                      background: 'linear-gradient(135deg, #10b981, #059669)',
-                      color: 'white',
-                      border: 'none',
-                      padding: '8px 16px',
-                      borderRadius: '6px',
-                      cursor: 'pointer',
-                      fontSize: '12px',
-                      fontWeight: '500'
-                    }}
-                  >
-                    🔄 Refresh Categories ({this.state.customCategories?.length || 0})
-                  </button>
+                    >
+                      Rows: {this.state.addItemsRows.length}
+                    </span>
+                    <button
+                      onClick={() => {
+                        this.fetchCategories();
+                      }}
+                      style={{
+                        background: '#16a34a',
+                        color: '#fff',
+                        border: 'none',
+                        borderRadius: 8,
+                        padding: '10px 14px',
+                        cursor: 'pointer',
+                        fontWeight: 700
+                      }}
+                    >
+                      🔄 Refresh Categories
+                    </button>
+                  </div>
                 </div>
                 
-                <div style={{ overflowX: 'auto' }}>
-                  <table style={{ width: '100%', borderCollapse: 'separate', borderSpacing: '0 12px', marginBottom: '20px' }}>
+                <div style={{ padding: '18px 20px 12px 20px' }}>
+                  <div className="add-items-table-wrap" style={{ overflowX: 'auto', overflowY: 'auto', maxHeight: '52vh', border: '1px solid #e5e7eb', borderRadius: 12 }}>
+                  <table className="add-items-grid-table" style={{ width: '100%', borderCollapse: 'separate', borderSpacing: 0, minWidth: '1040px' }}>
                     <thead>
-                      <tr style={{ background: 'linear-gradient(135deg, #ffffff, #f8f9fa)' }}>
-                        <th style={{ padding: '16px', border: '1px solid #e0e0e0', textAlign: 'left', borderRadius: '8px 0 0 8px', color: '#555555', fontWeight: '600' }}>Item Name</th>
-                        <th style={{ padding: '16px', border: '1px solid #e0e0e0', borderLeft: 'none', textAlign: 'left', color: '#555555', fontWeight: '600' }}>Quantity</th>
-                        <th style={{ padding: '16px', border: '1px solid #e0e0e0', borderLeft: 'none', textAlign: 'left', color: '#555555', fontWeight: '600' }}>Price (₱)</th>
-                        <th style={{ padding: '16px', border: '1px solid #e0e0e0', borderLeft: 'none', textAlign: 'left', color: '#555555', fontWeight: '600' }}>Category</th>
-                        <th style={{ padding: '16px', border: '1px solid #e0e0e0', borderLeft: 'none', textAlign: 'center', borderRadius: '0 8px 8px 0', color: '#555555', fontWeight: '600' }}>Actions</th>
+                      <tr style={{ background: 'linear-gradient(135deg, #5b6ee1, #6f4cc9)' }}>
+                        <th style={{ position: 'sticky', top: 0, zIndex: 3, textAlign: 'left', color: '#fff', fontSize: 13, fontWeight: 800 }} className="add-items-grid-th">ID</th>
+                        <th style={{ position: 'sticky', top: 0, zIndex: 3, textAlign: 'left', color: '#fff', fontSize: 13, fontWeight: 800 }} className="add-items-grid-th">Item Name</th>
+                        <th style={{ position: 'sticky', top: 0, zIndex: 3, textAlign: 'left', color: '#fff', fontSize: 13, fontWeight: 800 }} className="add-items-grid-th">Category</th>
+                        <th style={{ position: 'sticky', top: 0, zIndex: 3, textAlign: 'right', color: '#fff', fontSize: 13, fontWeight: 800 }} className="add-items-grid-th">Quantity</th>
+                        <th style={{ position: 'sticky', top: 0, zIndex: 3, textAlign: 'right', color: '#fff', fontSize: 13, fontWeight: 800 }} className="add-items-grid-th">Price (₱)</th>
+                        <th style={{ position: 'sticky', top: 0, zIndex: 3, textAlign: 'right', color: '#fff', fontSize: 13, fontWeight: 800 }} className="add-items-grid-th">Total Value (₱)</th>
+                        <th style={{ position: 'sticky', top: 0, zIndex: 3, textAlign: 'center', color: '#fff', fontSize: 13, fontWeight: 800 }} className="add-items-grid-th">Status</th>
+                        <th style={{ position: 'sticky', top: 0, zIndex: 3, textAlign: 'center', color: '#fff', fontSize: 13, fontWeight: 800 }} className="add-items-grid-th">Last Updated</th>
+                        <th style={{ position: 'sticky', top: 0, zIndex: 3, textAlign: 'center', color: '#fff', fontSize: 13, fontWeight: 800 }} className="add-items-grid-th">Actions</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {this.state.addItemsRows.map((row, index) => (
-                        <tr key={index} style={{ background: index % 2 === 0 ? '#fafafa' : '#fff' }}>
-                          <td style={{ padding: '16px', border: '1px solid #ddd', borderRadius: '8px 0 0 8px' }}>
+                      {this.state.addItemsRows.map((row, index) => {
+                        const suggestedCategory = this.getSuggestedCategory(row.itemName);
+                        const categoryOptions = [...new Set([...(this.state.customCategories || []), ...(suggestedCategory ? [suggestedCategory] : [])])];
+                        const quantityValue = parseFloat(row.quantity) || 0;
+                        const priceValue = parseFloat(row.price) || 0;
+                        const rowTotal = quantityValue * priceValue;
+                        const stockStatus = quantityValue > 0 && quantityValue <= this.state.lowStockThreshold ? 'Low Stock' : 'In Stock';
+                        const previewDate = new Date().toLocaleDateString('en-US', { month: 'numeric', year: 'numeric' });
+
+                        return (
+                        <tr key={index} style={{ background: index % 2 === 0 ? '#ffffff' : '#fafbff' }} className="add-items-grid-row">
+                          <td style={{ borderBottom: '1px solid #edf2f7' }} className="add-items-grid-td">
+                            <div style={{ fontWeight: 700, color: '#0f172a' }}>{index + 1}</div>
+                          </td>
+                          <td style={{ borderBottom: '1px solid #edf2f7' }} className="add-items-grid-td">
                             <input
                               type="text"
                               value={row.itemName}
                               onChange={(e) => this.handleAddItemsChange(index, 'itemName', e.target.value)}
-                              style={{ 
-                                width: '100%', 
-                                padding: '12px 16px', 
-                                border: '2px solid #e0e0e0', 
-                                borderRadius: '8px',
-                                fontSize: '14px',
-                                transition: 'border-color 0.3s',
-                                outline: 'none'
-                              }}
-                              placeholder="Enter item name"
-                              onFocus={(e) => e.target.style.borderColor = '#2196f3'}
-                              onBlur={(e) => e.target.style.borderColor = '#e0e0e0'}
+                              required
+                              className="add-items-field"
+                              style={{ width: '100%', outline: 'none' }}
+                              placeholder="Item name *"
                             />
                           </td>
-                          <td style={{ padding: '16px', border: '1px solid #ddd', borderLeft: 'none' }}>
+                          <td style={{ borderBottom: '1px solid #edf2f7' }} className="add-items-grid-td">
+                            <select
+                              value={row.category}
+                              onChange={(e) => this.handleAddItemsChange(index, 'category', e.target.value)}
+                              required
+                              className="add-items-field"
+                              style={{ width: '100%', background: '#fff' }}
+                            >
+                              <option value="">Select category *</option>
+                              {categoryOptions.map(category => (
+                                <option key={category} value={category}>{category}</option>
+                              ))}
+                            </select>
+                            {suggestedCategory && row.category !== suggestedCategory && (
+                              <div style={{ marginTop: 8, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                                <span style={{ fontSize: 12, color: '#4338ca', fontWeight: 700 }}>
+                                  Suggested: {suggestedCategory}
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() => this.applySuggestedCategory(index)}
+                                  style={{
+                                    border: '1px solid #c7d2fe',
+                                    background: '#eef2ff',
+                                    color: '#3730a3',
+                                    fontSize: 11,
+                                    fontWeight: 700,
+                                    borderRadius: 999,
+                                    padding: '4px 10px',
+                                    cursor: 'pointer'
+                                  }}
+                                >
+                                  Use Suggestion
+                                </button>
+                              </div>
+                            )}
+                          </td>
+                          <td style={{ borderBottom: '1px solid #edf2f7' }} className="add-items-grid-td">
                             <input
                               type="number"
                               value={row.quantity}
                               onChange={(e) => this.handleAddItemsChange(index, 'quantity', e.target.value)}
-                              style={{ 
-                                width: '100%', 
-                                padding: '12px 16px', 
-                                border: '2px solid #e0e0e0', 
-                                borderRadius: '8px',
-                                fontSize: '14px',
-                                transition: 'border-color 0.3s',
-                                outline: 'none'
-                              }}
-                              placeholder="0"
-                              min="0"
-                              onFocus={(e) => e.target.style.borderColor = '#2196f3'}
-                              onBlur={(e) => e.target.style.borderColor = '#e0e0e0'}
+                              required
+                              className="add-items-field add-items-number"
+                              style={{ width: '100%' }}
+                              min="1"
                             />
                           </td>
-                          <td style={{ padding: '16px', border: '1px solid #ddd', borderLeft: 'none' }}>
+                          <td style={{ borderBottom: '1px solid #edf2f7' }} className="add-items-grid-td">
                             <input
                               type="number"
                               value={row.price}
                               onChange={(e) => this.handleAddItemsChange(index, 'price', e.target.value)}
-                              style={{ 
-                                width: '100%', 
-                                padding: '12px 16px', 
-                                border: '2px solid #e0e0e0', 
-                                borderRadius: '8px',
-                                fontSize: '14px',
-                                transition: 'border-color 0.3s',
-                                outline: 'none'
-                              }}
-                              placeholder="0.00"
+                              required
+                              className="add-items-field add-items-number"
+                              style={{ width: '100%' }}
                               min="0"
                               step="0.01"
-                              onFocus={(e) => e.target.style.borderColor = '#2196f3'}
-                              onBlur={(e) => e.target.style.borderColor = '#e0e0e0'}
                             />
                           </td>
-                          <td style={{ padding: '16px', border: '1px solid #ddd', borderLeft: 'none' }}>
-                            <select
-                              value={row.category}
-                              onChange={(e) => this.handleAddItemsChange(index, 'category', e.target.value)}
-                              style={{ 
-                                width: '100%', 
-                                padding: '12px 16px', 
-                                border: '2px solid #e0e0e0', 
-                                borderRadius: '8px',
-                                fontSize: '14px',
-                                transition: 'border-color 0.3s',
-                                outline: 'none',
-                                background: '#fff'
-                              }}
-                              onFocus={(e) => e.target.style.borderColor = '#2196f3'}
-                              onBlur={(e) => e.target.style.borderColor = '#e0e0e0'}
-                            >
-                              <option value="">Select category</option>
-                              {(this.state.customCategories || []).map(category => (
-                                <option key={category} value={category}>{category}</option>
-                              ))}
-                            </select>
+                          <td style={{ borderBottom: '1px solid #edf2f7', fontWeight: 800, color: '#0f172a', textAlign: 'right' }} className="add-items-grid-td">
+                            ₱{rowTotal.toFixed(2)}
                           </td>
-                          <td style={{ padding: '16px', border: '1px solid #ddd', borderLeft: 'none', textAlign: 'center', borderRadius: '0 8px 8px 0' }}>
+                          <td style={{ borderBottom: '1px solid #edf2f7', textAlign: 'center' }} className="add-items-grid-td">
+                            <span style={{
+                              display: 'inline-block',
+                              borderRadius: 999,
+                              padding: '4px 10px',
+                              fontSize: 12,
+                              fontWeight: 800,
+                              color: '#fff',
+                              background: stockStatus === 'In Stock' ? '#22c55e' : '#f59e0b'
+                            }}>
+                              {stockStatus}
+                            </span>
+                          </td>
+                          <td style={{ borderBottom: '1px solid #edf2f7', textAlign: 'center', color: '#334155', fontWeight: 600 }} className="add-items-grid-td">
+                            {previewDate}
+                          </td>
+                          <td style={{ borderBottom: '1px solid #edf2f7', textAlign: 'center' }} className="add-items-grid-td">
                             <button
                               onClick={() => this.removeItemsRow(index)}
                               style={{
-                                background: '#f44336',
+                                background: '#dc3545',
                                 color: 'white',
                                 border: 'none',
-                                padding: '8px 16px',
-                                borderRadius: '6px',
+                                padding: '8px 14px',
+                                borderRadius: 4,
                                 cursor: 'pointer',
-                                fontSize: '13px',
-                                fontWeight: '500',
-                                transition: 'background 0.3s'
+                                fontSize: '13px'
                               }}
-                              onMouseEnter={(e) => e.target.style.background = '#d32f2f'}
-                              onMouseLeave={(e) => e.target.style.background = '#f44336'}
                             >
                               Remove
                             </button>
                           </td>
                         </tr>
-                      ))}
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
-                
-                <div style={{ display: 'flex', gap: '16px', justifyContent: 'center', marginTop: '32px', flexWrap: 'wrap' }}>
-                  <button
-                    onClick={this.addItemsRow}
-                    style={{
-                      background: 'linear-gradient(135deg, #2196f3, #1976d2)',
-                      color: 'white',
-                      border: 'none',
-                      padding: '12px 24px',
-                      borderRadius: '8px',
-                      cursor: 'pointer',
-                      fontSize: '14px',
-                      fontWeight: '600',
-                      transition: 'all 0.3s',
-                      boxShadow: '0 2px 8px rgba(33,150,243,0.3)',
-                      minWidth: '140px'
-                    }}
-                    onMouseEnter={(e) => {
-                      e.target.style.transform = 'translateY(-2px)';
-                      e.target.style.boxShadow = '0 4px 12px rgba(33,150,243,0.4)';
-                    }}
-                    onMouseLeave={(e) => {
-                      e.target.style.transform = 'translateY(0)';
-                      e.target.style.boxShadow = '0 2px 8px rgba(33,150,243,0.3)';
-                    }}
-                  >
-                    ➕ Add Row
-                  </button>
-                  <button
-                    onClick={this.saveAllItems}
-                    style={{
-                      background: 'linear-gradient(135deg, #4caf50, #45a049)',
-                      color: 'white',
-                      border: 'none',
-                      padding: '12px 24px',
-                      borderRadius: '8px',
-                      cursor: 'pointer',
-                      fontSize: '14px',
-                      fontWeight: '600',
-                      transition: 'all 0.3s',
-                      boxShadow: '0 2px 8px rgba(76,175,80,0.3)',
-                      minWidth: '140px'
-                    }}
-                    onMouseEnter={(e) => {
-                      e.target.style.transform = 'translateY(-2px)';
-                      e.target.style.boxShadow = '0 4px 12px rgba(76,175,80,0.4)';
-                    }}
-                    onMouseLeave={(e) => {
-                      e.target.style.transform = 'translateY(0)';
-                      e.target.style.boxShadow = '0 2px 8px rgba(76,175,80,0.3)';
-                    }}
-                  >
-                    💾 Save All Items
-                  </button>
-                  <button
-                    onClick={this.clearAddItemsForm}
-                    style={{
-                      background: 'linear-gradient(135deg, #ff9800, #f57c00)',
-                      color: 'white',
-                      border: 'none',
-                      padding: '12px 24px',
-                      borderRadius: '8px',
-                      cursor: 'pointer',
-                      fontSize: '14px',
-                      fontWeight: '600',
-                      transition: 'all 0.3s',
-                      boxShadow: '0 2px 8px rgba(255,152,0,0.3)',
-                      minWidth: '140px'
-                    }}
-                    onMouseEnter={(e) => {
-                      e.target.style.transform = 'translateY(-2px)';
-                      e.target.style.boxShadow = '0 4px 12px rgba(255,152,0,0.4)';
-                    }}
-                    onMouseLeave={(e) => {
-                      e.target.style.transform = 'translateY(0)';
-                      e.target.style.boxShadow = '0 2px 8px rgba(255,152,0,0.3)';
-                    }}
-                  >
-                    🔄 Clear Form
-                  </button>
                 </div>
+                
+                <div style={{
+                  position: 'sticky',
+                  bottom: 0,
+                  zIndex: 4,
+                  background: '#fff',
+                  borderTop: '1px solid #e5e7eb',
+                  padding: '14px 20px',
+                  display: 'flex',
+                  gap: 12,
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  flexWrap: 'wrap'
+                }}>
+                  <div style={{
+                    background: '#f8fafc',
+                    border: '1px solid #e2e8f0',
+                    borderRadius: 10,
+                    padding: '10px 14px',
+                    fontSize: 15,
+                    fontWeight: 800,
+                    color: '#0f172a'
+                  }}>
+                    Total Amount: ₱{this.state.addItemsRows.reduce((sum, row) => {
+                      const quantityValue = parseFloat(row.quantity) || 0;
+                      const priceValue = parseFloat(row.price) || 0;
+                      return sum + (quantityValue * priceValue);
+                    }, 0).toFixed(2)}
+                  </div>
+                  <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                    <button
+                      onClick={this.addItemsRow}
+                      style={{
+                        background: '#2563eb',
+                        color: 'white',
+                        border: 'none',
+                        borderRadius: 8,
+                        padding: '10px 16px',
+                        cursor: 'pointer',
+                        fontWeight: 'bold'
+                      }}
+                    >
+                      ➕ Add Row
+                    </button>
+                    <button
+                      onClick={this.saveAllItems}
+                      style={{
+                        background: '#16a34a',
+                        color: 'white',
+                        border: 'none',
+                        borderRadius: 8,
+                        padding: '10px 16px',
+                        cursor: 'pointer',
+                        fontWeight: 'bold'
+                      }}
+                    >
+                      💾 Save All Items
+                    </button>
+                    <button
+                      onClick={this.clearAddItemsForm}
+                      style={{
+                        background: '#f59e0b',
+                        color: '#fff',
+                        border: 'none',
+                        borderRadius: 8,
+                        padding: '10px 16px',
+                        cursor: 'pointer',
+                        fontWeight: 'bold'
+                      }}
+                    >
+                      🔄 Clear Form
+                    </button>
+                  </div>
+                </div>
+                <style>
+                  {`
+                    .add-items-grid-th {
+                      padding: 14px 16px;
+                    }
+                    .add-items-grid-td {
+                      padding: 14px 16px;
+                      vertical-align: top;
+                    }
+                    .add-items-field {
+                      box-sizing: border-box;
+                      padding: 11px 12px;
+                      margin: 2px 0;
+                      border: 1px solid #d1d5db;
+                      border-radius: 8px;
+                    }
+                    .add-items-number {
+                      text-align: right;
+                    }
+                    .add-items-table-wrap::-webkit-scrollbar {
+                      height: 10px;
+                      width: 10px;
+                    }
+                    .add-items-table-wrap::-webkit-scrollbar-thumb {
+                      background: #cbd5e1;
+                      border-radius: 999px;
+                    }
+                    @media (max-width: 1024px) {
+                      .add-items-grid-table {
+                        min-width: 920px !important;
+                      }
+                      .add-items-grid-th,
+                      .add-items-grid-td {
+                        padding: 12px 12px;
+                      }
+                    }
+                    @media (max-width: 768px) {
+                      .add-items-grid-table {
+                        min-width: 860px !important;
+                      }
+                      .add-items-grid-th,
+                      .add-items-grid-td {
+                        padding: 10px 10px;
+                      }
+                      .add-items-field {
+                        padding: 10px 10px;
+                        font-size: 13px;
+                      }
+                    }
+                  `}
+                </style>
               </div>
             )}
-
+ 
             {/* Update Items Page */}
             {mainContent === 'update-items' && (
               <div style={{
@@ -2980,7 +4704,7 @@ export default class UserDashboard extends Component {
                     ))}
                   </select>
                 </div>
-
+ 
                 {this.state.selectedUpdateItem && (
                   <div style={{ 
                     display: 'grid', 
@@ -2992,6 +4716,38 @@ export default class UserDashboard extends Component {
                     borderRadius: '12px',
                     border: '2px solid #e9ecef'
                   }}>
+                    {this.state.returnToAllItemsAfterUpdate && (
+                      <div style={{
+                        gridColumn: '1 / -1',
+                        display: 'grid',
+                        gridTemplateColumns: 'repeat(2, minmax(200px, 1fr))',
+                        gap: 12,
+                        marginBottom: 8
+                      }}>
+                        <div style={{
+                          background: '#eef2ff',
+                          border: '1px solid #c7d2fe',
+                          borderRadius: 8,
+                          padding: '10px 12px',
+                          fontSize: 12,
+                          fontWeight: 700,
+                          color: '#4338ca'
+                        }}>
+                          Last Updated: {this.state.selectedUpdateItem.updated_at ? new Date(this.state.selectedUpdateItem.updated_at).toLocaleString() : 'N/A'}
+                        </div>
+                        <div style={{
+                          background: '#ecfeff',
+                          border: '1px solid #a5f3fc',
+                          borderRadius: 8,
+                          padding: '10px 12px',
+                          fontSize: 12,
+                          fontWeight: 700,
+                          color: '#155e75'
+                        }}>
+                          Item Actions: Update in progress
+                        </div>
+                      </div>
+                    )}
                     <div style={{ marginBottom: '8px' }}>
                       <label style={{ 
                         display: 'block', 
@@ -3156,13 +4912,17 @@ export default class UserDashboard extends Component {
                     💾 Update Item
                   </button>
                   <button
-                    onClick={() => this.setState({
+                    onClick={() => this.setState(prevState => ({
                       selectedUpdateItem: null,
                       updateItemName: '',
                       updateItemQuantity: '',
                       updateItemPrice: '',
-                      updateItemCategory: ''
-                    })}
+                      updateItemCategory: '',
+                      returnToAllItemsAfterUpdate: false,
+                      mainContent: prevState.returnToAllItemsAfterUpdate ? 'all-items-table' : prevState.mainContent,
+                      selectedAllItemsItemId: prevState.returnToAllItemsAfterUpdate ? null : prevState.selectedAllItemsItemId,
+                      showAllItemsActionPanel: false
+                    }))}
                     style={{
                       background: 'linear-gradient(45deg, #6c757d, #868e96)',
                       color: '#fff',
@@ -3185,7 +4945,7 @@ export default class UserDashboard extends Component {
                       e.target.style.boxShadow = '0 4px 15px rgba(108, 117, 125, 0.3)';
                     }}
                   >
-                    �️ Clear Selection
+                    {this.state.returnToAllItemsAfterUpdate ? '↩️ Cancel' : '🗑️ Clear Selection'}
                   </button>
                 </div>
               </div>
@@ -3471,8 +5231,9 @@ export default class UserDashboard extends Component {
                   📋 All Inventory Items
                 </h2>
                 
-                <div style={{ overflowX: 'auto' }}>
-                  <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                <div style={{ display: 'flex', gap: 16, alignItems: 'flex-start', flexWrap: 'wrap' }}>
+                  <div style={{ overflowX: 'auto', flex: 1 }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 980 }}>
                     <thead>
                       <tr style={{ background: '#f5f5f5' }}>
                         <th style={{ padding: '12px', border: '1px solid #ddd', textAlign: 'left' }}>ID</th>
@@ -3483,20 +5244,27 @@ export default class UserDashboard extends Component {
                         <th style={{ padding: '12px', border: '1px solid #ddd', textAlign: 'right' }}>Total Value (₱)</th>
                         <th style={{ padding: '12px', border: '1px solid #ddd', textAlign: 'center' }}>Status</th>
                         <th style={{ padding: '12px', border: '1px solid #ddd', textAlign: 'center' }}>Last Updated</th>
+                        {!this.state.showAllItemsActionPanel && !this.state.returnToAllItemsAfterUpdate && (
+                          <th style={{ padding: '12px', border: '1px solid #ddd', textAlign: 'center', minWidth: 170, width: 170 }}>Item Actions</th>
+                        )}
                       </tr>
                     </thead>
                     <tbody>
                       {this.state.inventoryItems.length === 0 ? (
                         <tr>
-                          <td colSpan="8" style={{ padding: '24px', textAlign: 'center', color: '#666' }}>
+                          <td colSpan={!this.state.showAllItemsActionPanel && !this.state.returnToAllItemsAfterUpdate ? 9 : 8} style={{ padding: '24px', textAlign: 'center', color: '#666' }}>
                             No items found. Add some items to get started!
                           </td>
                         </tr>
                       ) : (
                         this.state.inventoryItems.map((item, index) => (
                           <tr key={item.id || index} style={{ 
-                            background: index % 2 === 0 ? '#fafafa' : '#fff',
-                          }}>
+                            background: (item.item_id || item.id) === this.state.selectedAllItemsItemId
+                              ? '#eff6ff'
+                              : (index % 2 === 0 ? '#fafafa' : '#fff'),
+                            cursor: 'pointer'
+                          }}
+                          onClick={() => this.handleAllItemsRowSelect(item)}>
                             <td style={{ padding: '12px', border: '1px solid #ddd' }}>{item.id}</td>
                             <td style={{ padding: '12px', border: '1px solid #ddd', fontWeight: 'bold' }}>
                               {item.name}
@@ -3526,27 +5294,260 @@ export default class UserDashboard extends Component {
                               ₱{((parseFloat(item.quantity) || 0) * (parseFloat(item.price) || 0)).toFixed(2)}
                             </td>
                             <td style={{ padding: '12px', border: '1px solid #ddd', textAlign: 'center' }}>
-                              <span style={{
-                                background: item.quantity === 0 ? '#f44336' : 
-                                          item.quantity <= this.state.lowStockThreshold ? '#ff9800' : '#4caf50',
-                                color: 'white',
-                                padding: '4px 8px',
-                                borderRadius: '12px',
-                                fontSize: '12px',
-                                fontWeight: 'bold'
-                              }}>
-                                {item.quantity === 0 ? 'Out of Stock' :
-                                 item.quantity <= this.state.lowStockThreshold ? 'Low Stock' : 'In Stock'}
-                              </span>
+                              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6 }}>
+                                <span style={{
+                                  background: item.quantity === 0 ? '#f44336' : 
+                                            item.quantity <= this.state.lowStockThreshold ? '#ff9800' : '#4caf50',
+                                  color: 'white',
+                                  padding: '4px 8px',
+                                  borderRadius: '12px',
+                                  fontSize: '12px',
+                                  fontWeight: 'bold'
+                                }}>
+                                  {item.quantity === 0 ? 'Out of Stock' :
+                                   item.quantity <= this.state.lowStockThreshold ? 'Low Stock' : 'In Stock'}
+                                </span>
+                              </div>
                             </td>
                             <td style={{ padding: '12px', border: '1px solid #ddd', textAlign: 'center', fontSize: '12px', color: '#666' }}>
                               {item.updated_at ? new Date(item.updated_at).toLocaleDateString() : 'N/A'}
                             </td>
+                            {!this.state.showAllItemsActionPanel && !this.state.returnToAllItemsAfterUpdate && (
+                              <td style={{ padding: '12px', border: '1px solid #ddd', textAlign: 'center', minWidth: 170, width: 170 }}>
+                                <div style={{ display: 'flex', gap: 8, justifyContent: 'center', alignItems: 'center', flexWrap: 'nowrap' }}>
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      this.handleAllItemsRowSelect(item);
+                                    }}
+                                    style={{
+                                      background: '#3b82f6',
+                                      color: 'white',
+                                      border: 'none',
+                                      height: 32,
+                                      minWidth: 72,
+                                      padding: '0 12px',
+                                      borderRadius: '4px',
+                                      cursor: 'pointer',
+                                      fontSize: '12px',
+                                      fontWeight: '600',
+                                      lineHeight: 1
+                                    }}
+                                  >
+                                    Edit
+                                  </button>
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      this.handleDeleteInventoryItem(item);
+                                    }}
+                                    style={{
+                                      background: '#ef4444',
+                                      color: 'white',
+                                      border: 'none',
+                                      height: 32,
+                                      minWidth: 72,
+                                      padding: '0 12px',
+                                      borderRadius: '4px',
+                                      cursor: 'pointer',
+                                      fontSize: '12px',
+                                      fontWeight: '600',
+                                      lineHeight: 1
+                                    }}
+                                  >
+                                    Delete
+                                  </button>
+                                </div>
+                              </td>
+                            )}
                           </tr>
                         ))
                       )}
                     </tbody>
                   </table>
+                  </div>
+                  {this.state.showAllItemsActionPanel && selectedAllItemsItem && (
+                    <aside style={{
+                      width: 300,
+                      flexShrink: 0,
+                      background: '#f8fafc',
+                      border: '1px solid #e2e8f0',
+                      borderRadius: 12,
+                      padding: 14,
+                      boxSizing: 'border-box'
+                    }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                        <h3 style={{ margin: 0, fontSize: 16, color: '#0f172a' }}>Item Actions</h3>
+                        <button
+                          onClick={this.closeAllItemsActionPanel}
+                          style={{
+                            height: 36,
+                            minWidth: 36,
+                            borderRadius: 8,
+                            border: '1px solid #cbd5e1',
+                            background: '#fff',
+                            cursor: 'pointer',
+                            fontSize: 15,
+                            fontWeight: 700,
+                            lineHeight: 1
+                          }}
+                        >
+                          ×
+                        </button>
+                      </div>
+
+                      <div style={{ marginBottom: 14, fontSize: 13, color: '#334155', lineHeight: 1.5 }}>
+                        <div><strong>Name:</strong> {selectedAllItemsItem.item_name || selectedAllItemsItem.name}</div>
+                        <div><strong>Category:</strong> {selectedAllItemsItem.category || 'Uncategorized'}</div>
+                        <div><strong>Current Qty:</strong> {selectedAllItemsItem.quantity}</div>
+                        <div><strong>Price:</strong> ₱{(parseFloat(selectedAllItemsItem.price) || 0).toFixed(2)}</div>
+                      </div>
+
+                      <div style={{ marginBottom: 12 }}>
+                        <div style={{ fontSize: 12, fontWeight: 700, color: '#475569', marginBottom: 6 }}>Quantity Control</div>
+                        <div style={{ display: 'grid', gridTemplateColumns: '36px minmax(0, 1fr) 36px', alignItems: 'center', gap: 8 }}>
+                          <button
+                            onClick={() => this.handleAdjustStock(selectedAllItemsItem, 'subtract')}
+                            disabled={!!this.state.stockAdjustLoading[selectedAllItemsItem.item_id || selectedAllItemsItem.id]}
+                            style={{
+                              height: 36,
+                              minWidth: 36,
+                              border: 'none',
+                              borderRadius: 8,
+                              background: '#ef4444',
+                              color: '#fff',
+                              cursor: 'pointer',
+                              fontSize: 16,
+                              fontWeight: 700,
+                              lineHeight: 1
+                            }}
+                          >
+                            -
+                          </button>
+                          <input
+                            type="number"
+                            min="1"
+                            placeholder="Qty"
+                            value={this.state.stockAdjustInputs[selectedAllItemsItem.item_id || selectedAllItemsItem.id] || ''}
+                            onChange={(e) => this.handleStockAdjustInputChange(selectedAllItemsItem.item_id || selectedAllItemsItem.id, e.target.value)}
+                            style={{
+                              height: 36,
+                              flex: 1,
+                              minWidth: 0,
+                              border: '1px solid #cbd5e1',
+                              borderRadius: 8,
+                              padding: '0 10px',
+                              fontSize: 12,
+                              fontWeight: 600,
+                              boxSizing: 'border-box'
+                            }}
+                          />
+                          <button
+                            onClick={() => this.handleAdjustStock(selectedAllItemsItem, 'add')}
+                            disabled={!!this.state.stockAdjustLoading[selectedAllItemsItem.item_id || selectedAllItemsItem.id]}
+                            style={{
+                              height: 36,
+                              minWidth: 36,
+                              marginLeft: -2,
+                              border: 'none',
+                              borderRadius: 8,
+                              background: '#10b981',
+                              color: '#fff',
+                              cursor: 'pointer',
+                              fontSize: 16,
+                              fontWeight: 700,
+                              lineHeight: 1
+                            }}
+                          >
+                            <span style={{ display: 'inline-block', transform: 'translateX(-2px)' }}>+</span>
+                          </button>
+                        </div>
+                      </div>
+
+                      <div style={{ marginBottom: 12 }}>
+                        <div style={{ fontSize: 12, fontWeight: 700, color: '#475569', marginBottom: 6 }}>Quick Sell</div>
+                        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 92px', alignItems: 'center', gap: 8 }}>
+                          <input
+                            type="number"
+                            min="1"
+                            max={selectedAllItemsItem.quantity}
+                            placeholder="Sell Qty"
+                            value={this.state.quickSaleInputs[selectedAllItemsItem.item_id || selectedAllItemsItem.id] || ''}
+                            onChange={(e) => this.handleQuickSaleInputChange(selectedAllItemsItem.item_id || selectedAllItemsItem.id, e.target.value)}
+                            style={{
+                              height: 36,
+                              flex: 1,
+                              minWidth: 0,
+                              border: '1px solid #cbd5e1',
+                              borderRadius: 8,
+                              padding: '0 10px',
+                              fontSize: 12,
+                              fontWeight: 600,
+                              boxSizing: 'border-box'
+                            }}
+                          />
+                          <button
+                            onClick={() => this.handleQuickSale(selectedAllItemsItem)}
+                            disabled={selectedAllItemsItem.quantity === 0}
+                            style={{
+                              height: 36,
+                              minWidth: 92,
+                              border: 'none',
+                              borderRadius: 8,
+                              background: selectedAllItemsItem.quantity === 0 ? '#cbd5e1' : '#10b981',
+                              color: '#fff',
+                              cursor: selectedAllItemsItem.quantity === 0 ? 'not-allowed' : 'pointer',
+                              fontSize: 12,
+                              fontWeight: 700,
+                              lineHeight: 1
+                            }}
+                          >
+                            Sell
+                          </button>
+                        </div>
+                      </div>
+
+                      <div style={{ display: 'flex', gap: 8 }}>
+                        <button
+                          onClick={() => {
+                            this.closeAllItemsActionPanel();
+                            this.openItemUpdateFromAllItems(selectedAllItemsItem);
+                          }}
+                          style={{
+                            height: 36,
+                            flex: 1,
+                            border: 'none',
+                            borderRadius: 8,
+                            background: '#3b82f6',
+                            color: '#fff',
+                            cursor: 'pointer',
+                            fontSize: 12,
+                            fontWeight: 700,
+                            lineHeight: 1
+                          }}
+                        >
+                          Update
+                        </button>
+                        <button
+                          onClick={() => this.handleDeleteInventoryItem(selectedAllItemsItem)}
+                          style={{
+                            height: 36,
+                            flex: 1,
+                            border: 'none',
+                            borderRadius: 8,
+                            background: '#ef4444',
+                            color: '#fff',
+                            cursor: 'pointer',
+                            fontSize: 12,
+                            fontWeight: 700,
+                            lineHeight: 1
+                          }}
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    </aside>
+                  )}
                 </div>
                 
                 <div style={{ marginTop: 20, textAlign: 'center', color: '#666' }}>
@@ -5126,7 +7127,7 @@ export default class UserDashboard extends Component {
             )}
 
             {/* Reborn Dashboard Homepage */}
-            {(!mainContent || mainContent === 'dashboard') && (
+            {false && (
               <div style={{
                 width: '100%',
                 padding: '0px',

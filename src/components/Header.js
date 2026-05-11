@@ -42,8 +42,8 @@ function Header({ showHero = true }) {
     };
   }, [showHero, slides.length]);
 
-  const handleSignUpClick = () => {
-    navigate('/register');
+  const handleLoginClick = () => {
+    navigate('/login');
   };
 
   const handleHomeClick = () => {
@@ -78,7 +78,7 @@ function Header({ showHero = true }) {
             <li><button type="button" className={location.pathname === '/' ? 'active' : ''} onClick={handleHomeClick}>Home</button></li>
             <li><button type="button" className={location.pathname === '/about' ? 'active' : ''} onClick={handleAboutClick}>About</button></li>
             <li><button type="button" onClick={handleProductsClick}>Products</button></li>
-            <li><button type="button" onClick={handleSignUpClick}>Sign up</button></li>
+            <li><button type="button" className={location.pathname === '/login' ? 'active' : ''} onClick={handleLoginClick}>Login</button></li>
           </ul>
         </nav>
       </div>
